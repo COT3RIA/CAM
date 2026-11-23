@@ -1,0 +1,44 @@
+name: Build Webcam VST
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Ad-hoc codesign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          find build/WebcamVST_artefacts/Release -name "*.vst3" -exec codesign --force --deep -s - {} \;
+          find build/WebcamVST_artefacts/Release -name "*.app" -exec codesign --force --deep -s - {} \;
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebcamViewer-${{ matrix.name }}
+          path: |
+            build/WebcamVST_artefacts/Release/VST3
+            build/WebcamVST_artefacts/Release/Standalone
+          if-no-files-found: error
