@@ -32,6 +32,8 @@ juce_add_plugin(WebcamVST
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
+    # Иконка Standalone-приложения (.ico / .icns JUCE делает из PNG сам)
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
     CAMERA_PERMISSION_ENABLED TRUE
     CAMERA_PERMISSION_TEXT "Webcam Viewer needs access to the camera to show and record video."
 )

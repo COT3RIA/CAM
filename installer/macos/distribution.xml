@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Webcam Viewer</title>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <background file="background.png" mime-type="image/png" alignment="left" scaling="proportional"/>
+
+    <choices-outline>
+        <line choice="vst3"/>
+        <line choice="standalone"/>
+    </choices-outline>
+
+    <choice id="vst3"
+            title="VST3 plugin"
+            description="Installs Webcam Viewer.vst3 to /Library/Audio/Plug-Ins/VST3"
+            enabled="false"
+            selected="true">
+        <pkg-ref id="com.webcamviewer.vst3"/>
+    </choice>
+
+    <choice id="standalone"
+            title="Standalone app"
+            description="Installs Webcam Viewer.app to /Applications (for testing the camera without a DAW)"
+            start_selected="true">
+        <pkg-ref id="com.webcamviewer.standalone"/>
+    </choice>
+
+    <pkg-ref id="com.webcamviewer.vst3" version="1.0.0" onConclusion="none">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.webcamviewer.standalone" version="1.0.0" onConclusion="none">standalone.pkg</pkg-ref>
+</installer-gui-script>
