@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "Recorder.h"
+#include "Strings.h"
 #include <juce_video/juce_video.h>
 
 class WebcamAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -28,6 +30,15 @@ private:
         }
     };
 
+    // Как именно идёт текущая запись
+    enum class RecordKind
+    {
+        none,
+        nativeVideo,        // видео пишет сама камера (WMV/MOV), без звука
+        nativeVideoAndWav,  // видео пишет камера, звук отдельным WAV-файлом
+        avi                 // один AVI-файл: видео и звук вместе
+    };
+
     // CameraDevice::Listener (вызывается из потока камеры)
     void imageReceived (const juce::Image& image) override;
 
@@ -38,11 +49,20 @@ private:
     void cameraOpened (std::unique_ptr<juce::CameraDevice> device, const juce::String& error);
     void closeCamera();
     void toggleRecording();
+    void startRecording();
     void stopRecordingInternal();
     void refreshDisplay();
-    void setStatus (const juce::String& text);
+
+    void setStatus (loc::Text id, const juce::String& arg = {});
+    juce::String getStatusText() const;
+    juce::String tr (loc::Text text) const { return loc::get (proc.language, text); }
 
     void styleControls();
+    void populateMicBox();
+    void applyLanguage();
+    void updateControlsEnabled();
+    juce::String getEffectiveMicName() const;
+
     void updateOverlay();
     void adaptToVideoAspect (int videoWidth, int videoHeight);
     juce::Rectangle<int> getStatusBounds() const;
@@ -53,15 +73,15 @@ private:
     std::unique_ptr<juce::CameraDevice> camera;
     int openGeneration = 0;
 
-    juce::StringArray cameraNames;
+    juce::StringArray cameraNames, micNames;
 
     OverlayPanel topBar;
-    juce::ComboBox cameraBox, lensBox;
-    juce::ToggleButton mirrorButton { "Mirror" };
-    juce::TextButton recordButton { "Record" };
-    juce::TextButton folderButton { "Open folder" };
+    juce::ComboBox cameraBox, lensBox, micBox, modeBox;
+    juce::ToggleButton mirrorButton, audioButton;
+    juce::TextButton recordButton, folderButton, langButton;
 
-    juce::String statusText;
+    loc::Text statusId = loc::Text::none;
+    juce::String statusArg;
     float overlayAlpha = 1.0f;
     juce::uint32 showUntilMs = 0;
 
@@ -77,8 +97,10 @@ private:
     juce::uint32 openedAtMs = 0;
 
     bool recording = false;
+    RecordKind recordKind = RecordKind::none;
     juce::uint32 recordStartMs = 0;
-    juce::File currentFile;
+    juce::String recordingInfo;
+    std::unique_ptr<AvRecorder> avRecorder;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WebcamAudioProcessorEditor)
 };

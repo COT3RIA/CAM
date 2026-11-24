@@ -6,6 +6,8 @@ WebcamAudioProcessor::WebcamAudioProcessor()
                           .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+    // Язык по умолчанию: русский, если система русская, иначе английский
+    language = juce::SystemStats::getUserLanguage().startsWithIgnoreCase ("ru") ? 1 : 0;
 }
 
 void WebcamAudioProcessor::prepareToPlay (double, int) {}
@@ -41,6 +43,10 @@ void WebcamAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xml.setAttribute ("camera", cameraName);
     xml.setAttribute ("lens", lensIndex);
     xml.setAttribute ("mirror", mirror);
+    xml.setAttribute ("lang", language);
+    xml.setAttribute ("recordAudio", recordAudio);
+    xml.setAttribute ("audioMode", audioMode);
+    xml.setAttribute ("mic", micName);
     copyXmlToBinary (xml, destData);
 }
 
@@ -50,9 +56,15 @@ void WebcamAudioProcessor::setStateInformation (const void* data, int sizeInByte
     {
         if (xml->hasTagName ("WebcamViewerState"))
         {
-            cameraName = xml->getStringAttribute ("camera");
-            lensIndex  = xml->getIntAttribute ("lens", 1);
-            mirror     = xml->getBoolAttribute ("mirror", false);
+            cameraName  = xml->getStringAttribute ("camera");
+            lensIndex   = xml->getIntAttribute ("lens", 1);
+            mirror      = xml->getBoolAttribute ("mirror", false);
+
+            // Старые проекты без этих полей оставляют значения по умолчанию
+            language    = juce::jlimit (0, 1, xml->getIntAttribute ("lang", language));
+            recordAudio = xml->getBoolAttribute ("recordAudio", false);
+            audioMode   = juce::jlimit (0, 1, xml->getIntAttribute ("audioMode", 0));
+            micName     = xml->getStringAttribute ("mic");
         }
     }
 }

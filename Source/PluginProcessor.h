@@ -38,6 +38,11 @@ public:
     int lensIndex = 1;
     bool mirror = false;
 
+    int language = 0;          // 0 = English, 1 = Русский (при первом запуске берётся язык системы)
+    bool recordAudio = false;  // писать ли звук с микрофона
+    int audioMode = 0;         // 0 = вместе с видео (один AVI-файл), 1 = отдельным файлом (WAV)
+    juce::String micName;      // пусто = микрофон по умолчанию
+
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WebcamAudioProcessor)
 };

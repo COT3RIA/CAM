@@ -36,6 +36,8 @@ juce_add_plugin(WebcamVST
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
     CAMERA_PERMISSION_ENABLED TRUE
     CAMERA_PERMISSION_TEXT "Webcam Viewer needs access to the camera to show and record video."
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "Webcam Viewer needs access to the microphone to record audio with the video."
 )
 
 target_sources(WebcamVST PRIVATE
@@ -43,6 +45,10 @@ target_sources(WebcamVST PRIVATE
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
+    Source/Recorder.cpp
+    Source/Recorder.h
+    Source/MediaWriters.h
+    Source/Strings.h
 )
 
 target_compile_definitions(WebcamVST PUBLIC
@@ -53,9 +59,15 @@ target_compile_definitions(WebcamVST PUBLIC
     JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
+# Исходники в UTF-8 (в них есть русские надписи): для MSVC это нужно указать явно
+target_compile_options(WebcamVST PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
 target_link_libraries(WebcamVST
     PRIVATE
         juce::juce_audio_utils
+        juce::juce_audio_devices
         juce::juce_video
     PUBLIC
         juce::juce_recommended_config_flags
