@@ -40,11 +40,33 @@ jobs:
           find build/WebcamVST_artefacts/Release -name "*.vst3" -exec codesign --force --deep -s - {} \;
           find build/WebcamVST_artefacts/Release -name "*.app" -exec codesign --force --deep -s - {} \;
 
-      - name: Upload artifacts
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "installer\windows\WebcamViewer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build installer (macOS)
+        if: runner.os == 'macOS'
+        run: bash installer/macos/build-pkg.sh
+
+      - name: Upload plugin files
         uses: actions/upload-artifact@v4
         with:
           name: WebcamViewer-${{ matrix.name }}
           path: |
             build/WebcamVST_artefacts/Release/VST3
             build/WebcamVST_artefacts/Release/Standalone
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebcamViewer-Installer-${{ matrix.name }}
+          path: installer_out/*
           if-no-files-found: error
