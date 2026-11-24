@@ -15,21 +15,16 @@ jobs:
         include:
           - name: Windows
             os: windows-latest
-          # JUCE 7.0.12 не собирается с macOS 15 SDK (CGWindowListCreateImage удалён),
-          # поэтому macOS-сборка закреплена на macos-14 с Xcode 15.4 (SDK 14.x).
           - name: macOS
-            os: macos-14
+            os: macos-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15.4 (macOS)
+      - name: Show toolchain (macOS)
         if: runner.os == 'macOS'
         run: |
-          if [ -d /Applications/Xcode_15.4.app ]; then
-            sudo xcode-select -s /Applications/Xcode_15.4.app
-          fi
           xcode-select -p
           xcrun --show-sdk-version
 
