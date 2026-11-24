@@ -22,6 +22,14 @@ namespace
 
     constexpr int kNumLenses = (int) (sizeof (kLenses) / sizeof (kLenses[0]));
 
+    // Размеры окна: 16:9 по умолчанию, соотношение потом подстраивается под камеру
+    constexpr int kMinW = 560, kMinH = 315, kMaxW = 1920, kMaxH = 1080;
+    constexpr int kStartW = 800, kStartH = 450;
+
+    const juce::Colour kControlBg   (0x66000000);
+    const juce::Colour kControlLine (0x40ffffff);
+    const juce::Colour kRecordingBg (0xa0d02020);
+
     const Lens& getLens (int index)
     {
         return kLenses[juce::jlimit (0, kNumLenses - 1, index)];
@@ -113,15 +121,14 @@ namespace
 WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
-    addAndMakeVisible (cameraBox);
-    addAndMakeVisible (lensBox);
-    addAndMakeVisible (mirrorButton);
-    addAndMakeVisible (recordButton);
-    addAndMakeVisible (folderButton);
-    addAndMakeVisible (statusLabel);
+    addAndMakeVisible (topBar);
+    topBar.addAndMakeVisible (cameraBox);
+    topBar.addAndMakeVisible (lensBox);
+    topBar.addAndMakeVisible (mirrorButton);
+    topBar.addAndMakeVisible (recordButton);
+    topBar.addAndMakeVisible (folderButton);
 
-    statusLabel.setJustificationType (juce::Justification::centredLeft);
-    statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    styleControls();
 
     cameraNames = juce::CameraDevice::getAvailableDevices();
 
@@ -161,7 +168,7 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     mirrorButton.onClick = [this]
     {
         proc.mirror = mirrorButton.getToggleState();
-        repaint (videoArea);
+        repaint();
     };
 
     recordButton.onClick = [this] { toggleRecording(); };
@@ -173,8 +180,15 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
         folder.startAsProcess();
     };
 
-    setResizeLimits (560, 340, 1920, 1200);
-    setSize (760, 520);
+    setResizeLimits (kMinW, kMinH, kMaxW, kMaxH);
+
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio ((double) kStartW / (double) kStartH);
+
+    setSize (kStartW, kStartH);
+
+    // При открытии окна панель видна 3 секунды, потом прячется, пока курсор не вернётся
+    showUntilMs = juce::Time::getMillisecondCounter() + 3000;
 
     startTimerHz (30);
 
@@ -189,11 +203,95 @@ WebcamAudioProcessorEditor::~WebcamAudioProcessorEditor()
 }
 
 //==============================================================================
-void WebcamAudioProcessorEditor::setStatus (const juce::String& text)
+void WebcamAudioProcessorEditor::styleControls()
 {
-    statusLabel.setText (text, juce::dontSendNotification);
+    for (auto* box : { &cameraBox, &lensBox })
+    {
+        box->setColour (juce::ComboBox::backgroundColourId, kControlBg);
+        box->setColour (juce::ComboBox::outlineColourId, kControlLine);
+        box->setColour (juce::ComboBox::textColourId, juce::Colours::white);
+        box->setColour (juce::ComboBox::arrowColourId, juce::Colours::white);
+    }
+
+    for (auto* button : { &recordButton, &folderButton })
+    {
+        button->setColour (juce::TextButton::buttonColourId, kControlBg);
+        button->setColour (juce::TextButton::buttonOnColourId, kControlBg);
+        button->setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        button->setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    }
+
+    mirrorButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    mirrorButton.setColour (juce::ToggleButton::tickColourId, juce::Colours::white);
+    mirrorButton.setColour (juce::ToggleButton::tickDisabledColourId, juce::Colours::grey);
 }
 
+void WebcamAudioProcessorEditor::setStatus (const juce::String& text)
+{
+    statusText = text;
+    repaint();
+}
+
+//==============================================================================
+// Панель и строка статуса видны, пока курсор над плагином (или открыт выпадающий список),
+// и ещё полсекунды после этого. Потом плавно гаснут.
+void WebcamAudioProcessorEditor::updateOverlay()
+{
+    const auto now = juce::Time::getMillisecondCounter();
+
+    const bool hovered = isMouseOver (true) || cameraBox.isPopupActive() || lensBox.isPopupActive();
+
+    if (hovered)
+        showUntilMs = now + 500;
+
+    const bool wantVisible = hovered || (juce::int32) (showUntilMs - now) > 0;
+
+    const float target = wantVisible ? 1.0f : 0.0f;
+    const float step   = wantVisible ? 0.20f : 0.07f;
+
+    float next = overlayAlpha;
+
+    if (next < target)      next = juce::jmin (target, next + step);
+    else if (next > target) next = juce::jmax (target, next - step);
+
+    if (next != overlayAlpha)
+    {
+        overlayAlpha = next;
+        topBar.setAlpha (overlayAlpha);
+        topBar.setVisible (overlayAlpha > 0.01f);
+        repaint (getStatusBounds());
+    }
+}
+
+// Подгоняет окно под пропорции кадра камеры, чтобы не было полос по краям
+void WebcamAudioProcessorEditor::adaptToVideoAspect (int videoWidth, int videoHeight)
+{
+    if (videoWidth < 2 || videoHeight < 2)
+        return;
+
+    const double aspect = (double) videoWidth / (double) videoHeight;
+
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio (aspect);
+
+    const int newHeight = juce::jlimit (kMinH, kMaxH, juce::roundToInt ((double) getWidth() / aspect));
+
+    if (std::abs (newHeight - getHeight()) > 2)
+        setSize (getWidth(), newHeight);
+}
+
+juce::Rectangle<int> WebcamAudioProcessorEditor::getStatusBounds() const
+{
+    const int reserved = recording ? 112 : 0;
+    return { 8, getHeight() - 8 - 26, juce::jmax (0, getWidth() - 16 - reserved), 26 };
+}
+
+juce::Rectangle<int> WebcamAudioProcessorEditor::getRecBounds() const
+{
+    return { getWidth() - 8 - 100, getHeight() - 8 - 26, 100, 26 };
+}
+
+//==============================================================================
 void WebcamAudioProcessorEditor::openCamera (int deviceIndex)
 {
     closeCamera();
@@ -275,6 +373,8 @@ void WebcamAudioProcessorEditor::imageReceived (const juce::Image& image)
 
 void WebcamAudioProcessorEditor::timerCallback()
 {
+    updateOverlay();
+
     juce::Image frame;
     bool have = false;
 
@@ -294,6 +394,7 @@ void WebcamAudioProcessorEditor::timerCallback()
         {
             gotFrame = true;
             setStatus (juce::String ("Live: ") + juce::String (frame.getWidth()) + "x" + juce::String (frame.getHeight()));
+            adaptToVideoAspect (frame.getWidth(), frame.getHeight());
         }
 
         currentFrame = frame;
@@ -309,7 +410,7 @@ void WebcamAudioProcessorEditor::timerCallback()
         }
 
         if (recording)
-            repaint (videoArea); // обновить таймер записи
+            repaint (getRecBounds()); // обновить таймер записи
     }
 }
 
@@ -318,7 +419,7 @@ void WebcamAudioProcessorEditor::refreshDisplay()
     if (getLens (proc.lensIndex).fisheye && currentFrame.isValid())
         fisheyeImage = makeFisheye (currentFrame);
 
-    repaint (videoArea);
+    repaint();
 }
 
 //==============================================================================
@@ -349,6 +450,8 @@ void WebcamAudioProcessorEditor::toggleRecording()
         recording = true;
         recordStartMs = juce::Time::getMillisecondCounter();
         recordButton.setButtonText ("Stop");
+        recordButton.setColour (juce::TextButton::buttonColourId, kRecordingBg);
+        recordButton.setColour (juce::TextButton::buttonOnColourId, kRecordingBg);
         cameraBox.setEnabled (false);
         setStatus ("Recording to: " + currentFile.getFullPathName());
     }
@@ -366,90 +469,116 @@ void WebcamAudioProcessorEditor::stopRecordingInternal()
 
     recording = false;
     recordButton.setButtonText ("Record");
+    recordButton.setColour (juce::TextButton::buttonColourId, kControlBg);
+    recordButton.setColour (juce::TextButton::buttonOnColourId, kControlBg);
     cameraBox.setEnabled (true);
+    repaint();
 }
 
 //==============================================================================
 void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff1b1b1b));
-    g.setColour (juce::Colours::black);
-    g.fillRect (videoArea);
+    const int W = getWidth();
+    const int H = getHeight();
+
+    g.fillAll (juce::Colours::black);
+
+    if (W <= 0 || H <= 0)
+        return;
 
     const auto& lens = getLens (proc.lensIndex);
     const juce::Image& img = lens.fisheye ? fisheyeImage : currentFrame;
+    const bool haveVideo = img.isValid();
 
-    if (! img.isValid())
+    if (! haveVideo)
     {
+        // Пока видео нет, сообщение (в том числе об ошибке) видно без наведения курсора
         g.setColour (juce::Colours::grey);
         g.setFont (16.0f);
-        g.drawText (cameraNames.isEmpty() ? "No cameras found" : "Waiting for video...",
-                    videoArea, juce::Justification::centred);
-        return;
+        g.drawFittedText (statusText.isNotEmpty() ? statusText : juce::String ("Waiting for video..."),
+                          getLocalBounds().reduced (40), juce::Justification::centred, 4);
     }
-
+    else
     {
         juce::Graphics::ScopedSaveState state (g);
 
+        // Кадр заполняет окно целиком: лишнее по краям обрезается (режим "cover")
         const float zoom = lens.fisheye ? 1.0f : lens.zoom;
         const int imgW = img.getWidth();
         const int imgH = img.getHeight();
-        const int cropW = juce::jmax (2, (int) ((float) imgW / zoom));
-        const int cropH = juce::jmax (2, (int) ((float) imgH / zoom));
-        const int cropX = (imgW - cropW) / 2;
-        const int cropY = (imgH - cropH) / 2;
 
-        const auto dest = juce::RectanglePlacement (juce::RectanglePlacement::centred)
-                              .appliedTo (juce::Rectangle<float> ((float) cropW, (float) cropH),
-                                          videoArea.toFloat());
+        double cropW = (double) imgW / (double) zoom;
+        double cropH = (double) imgH / (double) zoom;
+        const double winAspect = (double) W / (double) H;
 
-        g.reduceClipRegion (videoArea);
+        if (cropW / cropH > winAspect)
+            cropW = cropH * winAspect;
+        else
+            cropH = cropW / winAspect;
+
+        const int cw = juce::jlimit (2, imgW, juce::roundToInt (cropW));
+        const int ch = juce::jlimit (2, imgH, juce::roundToInt (cropH));
+        const int cx = (imgW - cw) / 2;
+        const int cy = (imgH - ch) / 2;
 
         if (proc.mirror)
-            g.addTransform (juce::AffineTransform::scale (-1.0f, 1.0f, dest.getCentreX(), dest.getCentreY()));
+            g.addTransform (juce::AffineTransform::scale (-1.0f, 1.0f, (float) W * 0.5f, (float) H * 0.5f));
 
         g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-
-        const auto d = dest.toNearestInt();
-        g.drawImage (img, d.getX(), d.getY(), d.getWidth(), d.getHeight(),
-                     cropX, cropY, cropW, cropH);
+        g.drawImage (img, 0, 0, W, H, cx, cy, cw, ch);
     }
 
-    // Оверлей (не зеркалится)
-    g.setFont (14.0f);
-    g.setColour (juce::Colours::white.withAlpha (0.8f));
-    g.drawText (lens.name, videoArea.reduced (8), juce::Justification::topRight);
+    // Строка статуса: только при наведении курсора, плавно появляется поверх видео
+    if (haveVideo && overlayAlpha > 0.01f && statusText.isNotEmpty())
+    {
+        const auto bar = getStatusBounds();
 
+        if (bar.getWidth() > 40)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.45f * overlayAlpha));
+            g.fillRoundedRectangle (bar.toFloat(), 8.0f);
+
+            g.setColour (juce::Colours::white.withAlpha (0.9f * overlayAlpha));
+            g.setFont (13.0f);
+            g.drawText (statusText, bar.reduced (10, 0), juce::Justification::centredLeft, true);
+        }
+    }
+
+    // Индикатор записи виден всегда, чтобы не забыть про идущую запись
     if (recording)
     {
+        const auto rec = getRecBounds();
         const auto secs = (int) ((juce::Time::getMillisecondCounter() - recordStartMs) / 1000);
+
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (rec.toFloat(), 8.0f);
+
         g.setColour (juce::Colours::red);
-        g.fillEllipse ((float) videoArea.getX() + 10.0f, (float) videoArea.getY() + 10.0f, 12.0f, 12.0f);
+        g.fillEllipse ((float) rec.getX() + 10.0f, (float) rec.getCentreY() - 5.0f, 10.0f, 10.0f);
+
         g.setColour (juce::Colours::white);
+        g.setFont (13.0f);
         g.drawText (juce::String::formatted ("REC %02d:%02d", secs / 60, secs % 60),
-                    videoArea.getX() + 28, videoArea.getY() + 6, 120, 20,
-                    juce::Justification::centredLeft);
+                    rec.withTrimmedLeft (26), juce::Justification::centredLeft, false);
     }
 }
 
 void WebcamAudioProcessorEditor::resized()
 {
-    auto r = getLocalBounds().reduced (8);
+    // Панель с настройками лежит поверх видео, видео занимает всё окно
+    topBar.setBounds (8, 8, juce::jmax (0, getWidth() - 16), 44);
 
-    auto top = r.removeFromTop (28);
-    folderButton.setBounds (top.removeFromRight (110));
-    top.removeFromRight (6);
-    recordButton.setBounds (top.removeFromRight (90));
-    top.removeFromRight (10);
-    mirrorButton.setBounds (top.removeFromRight (80));
-    top.removeFromRight (6);
-    lensBox.setBounds (top.removeFromRight (150));
-    top.removeFromRight (6);
-    cameraBox.setBounds (top);
+    auto r = topBar.getLocalBounds().reduced (8, 8);
 
-    r.removeFromTop (6);
-    statusLabel.setBounds (r.removeFromBottom (22));
-    r.removeFromBottom (4);
+    folderButton.setBounds (r.removeFromRight (100));
+    r.removeFromRight (6);
+    recordButton.setBounds (r.removeFromRight (80));
+    r.removeFromRight (8);
+    mirrorButton.setBounds (r.removeFromRight (74));
+    r.removeFromRight (6);
+    lensBox.setBounds (r.removeFromRight (140));
+    r.removeFromRight (6);
+    cameraBox.setBounds (r);
 
-    videoArea = r;
+    repaint();
 }
