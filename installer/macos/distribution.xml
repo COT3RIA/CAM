@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>Webcam Viewer</title>
+    <title>CAM</title>
     <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <background file="background.png" mime-type="image/png" alignment="left" scaling="proportional"/>
 
@@ -11,19 +11,19 @@
 
     <choice id="vst3"
             title="VST3 plugin"
-            description="Installs Webcam Viewer.vst3 to /Library/Audio/Plug-Ins/VST3"
+            description="Installs CAM.vst3 to /Library/Audio/Plug-Ins/VST3"
             enabled="false"
             selected="true">
-        <pkg-ref id="com.webcamviewer.vst3"/>
+        <pkg-ref id="com.coteria.cam.vst3"/>
     </choice>
 
     <choice id="standalone"
             title="Standalone app"
-            description="Installs Webcam Viewer.app to /Applications (for testing the camera without a DAW)"
+            description="Installs CAM.app to /Applications (for testing the camera without a DAW)"
             start_selected="true">
-        <pkg-ref id="com.webcamviewer.standalone"/>
+        <pkg-ref id="com.coteria.cam.standalone"/>
     </choice>
 
-    <pkg-ref id="com.webcamviewer.vst3" version="1.0.0" onConclusion="none">vst3.pkg</pkg-ref>
-    <pkg-ref id="com.webcamviewer.standalone" version="1.0.0" onConclusion="none">standalone.pkg</pkg-ref>
+    <pkg-ref id="com.coteria.cam.vst3" version="1.0.0" onConclusion="none">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.coteria.cam.standalone" version="1.0.0" onConclusion="none">standalone.pkg</pkg-ref>
 </installer-gui-script>

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the macOS installer (.pkg) for Webcam Viewer.
+# Builds the macOS installer (.pkg) for CAM by COTERIA.
 # Run from the repository root after the CMake build:  bash installer/macos/build-pkg.sh
 set -euo pipefail
 
@@ -13,22 +13,22 @@ mkdir -p "$OUT"
 
 # --- VST3 payload ---
 mkdir -p "$WORK/vst3root/Library/Audio/Plug-Ins/VST3"
-cp -R "$ART/VST3/Webcam Viewer.vst3" "$WORK/vst3root/Library/Audio/Plug-Ins/VST3/"
+cp -R "$ART/VST3/CAM.vst3" "$WORK/vst3root/Library/Audio/Plug-Ins/VST3/"
 
 pkgbuild \
   --root "$WORK/vst3root" \
-  --identifier "com.webcamviewer.vst3" \
+  --identifier "com.coteria.cam.vst3" \
   --version "$VERSION" \
   --install-location "/" \
   "$WORK/vst3.pkg"
 
 # --- Standalone payload ---
 mkdir -p "$WORK/approot/Applications"
-cp -R "$ART/Standalone/Webcam Viewer.app" "$WORK/approot/Applications/"
+cp -R "$ART/Standalone/CAM.app" "$WORK/approot/Applications/"
 
 pkgbuild \
   --root "$WORK/approot" \
-  --identifier "com.webcamviewer.standalone" \
+  --identifier "com.coteria.cam.standalone" \
   --version "$VERSION" \
   --install-location "/" \
   "$WORK/standalone.pkg"
@@ -38,6 +38,6 @@ productbuild \
   --distribution "$HERE/distribution.xml" \
   --resources "$HERE/resources" \
   --package-path "$WORK" \
-  "$OUT/WebcamViewer-Setup-macOS.pkg"
+  "$OUT/CAM-Setup-macOS.pkg"
 
-echo "Created $OUT/WebcamViewer-Setup-macOS.pkg"
+echo "Created $OUT/CAM-Setup-macOS.pkg"

@@ -21,10 +21,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(JUCE)
 
 juce_add_plugin(WebcamVST
-    COMPANY_NAME "WebcamViewer"
-    PRODUCT_NAME "Webcam Viewer"
-    PLUGIN_MANUFACTURER_CODE Wcvw
-    PLUGIN_CODE Wcv1
+    # Имя в DAW и имя файла (CAM.vst3), производитель в списке плагинов
+    COMPANY_NAME "COTERIA"
+    PRODUCT_NAME "CAM"
+    PLUGIN_NAME "CAM"
+    BUNDLE_ID "com.coteria.cam"
+    PLUGIN_MANUFACTURER_CODE Cotr
+    PLUGIN_CODE Cam1
     FORMATS VST3 Standalone
     VST3_CATEGORIES Fx
     IS_SYNTH FALSE
@@ -35,9 +38,9 @@ juce_add_plugin(WebcamVST
     # Иконка Standalone-приложения (.ico / .icns JUCE делает из PNG сам)
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
     CAMERA_PERMISSION_ENABLED TRUE
-    CAMERA_PERMISSION_TEXT "Webcam Viewer needs access to the camera to show and record video."
+    CAMERA_PERMISSION_TEXT "CAM needs access to the camera to show and record video."
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Webcam Viewer needs access to the microphone to record audio with the video."
+    MICROPHONE_PERMISSION_TEXT "CAM needs access to the microphone to record audio with the video."
 )
 
 target_sources(WebcamVST PRIVATE

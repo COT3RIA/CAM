@@ -23,8 +23,9 @@ namespace
     constexpr int kNumLenses = (int) (sizeof (kLenses) / sizeof (kLenses[0]));
 
     // Размеры окна: 16:9 по умолчанию, соотношение потом подстраивается под камеру
-    constexpr int kMinW = 640, kMinH = 360, kMaxW = 1920, kMaxH = 1080;
-    constexpr int kStartW = 800, kStartH = 450;
+    // Минимум 384x216: при такой ширине панель настроек переносит кнопки на несколько строк
+    constexpr int kMinW = 384, kMinH = 216, kMaxW = 1920, kMaxH = 1080;
+    constexpr int kStartW = 640, kStartH = 360;
 
     const juce::Colour kControlBg   (0x66000000);
     const juce::Colour kControlLine (0x40ffffff);
@@ -38,7 +39,7 @@ namespace
     juce::File getRecordingsFolder()
     {
         return juce::File::getSpecialLocation (juce::File::userMoviesDirectory)
-                   .getChildFile ("WebcamViewer");
+                   .getChildFile ("CAM");
     }
 
     // Программный fisheye с билинейной интерполяцией
@@ -746,33 +747,95 @@ void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
 
 void WebcamAudioProcessorEditor::resized()
 {
-    // Панель с настройками лежит поверх видео, видео занимает всё окно
-    topBar.setBounds (8, 8, juce::jmax (0, getWidth() - 16), 78);
+    // Панель с настройками лежит поверх видео, видео занимает всё окно.
+    // Кнопки раскладываются по строкам автоматически: чем уже окно, тем больше строк.
+    constexpr int pad = 8, gap = 6, rowHeight = 28, flexibleMin = 110;
 
-    auto r = topBar.getLocalBounds().reduced (8, 8);
-    auto row1 = r.removeFromTop (28);
-    r.removeFromTop (6);
-    auto row2 = r.removeFromTop (28);
+    const int panelWidth = juce::jmax (0, getWidth() - 16);
+    const int availableWidth = juce::jmax (0, panelWidth - 2 * pad);
 
-    // Первая строка: камера, объектив, зеркало, запись, папка
-    folderButton.setBounds (row1.removeFromRight (100));
-    row1.removeFromRight (6);
-    recordButton.setBounds (row1.removeFromRight (90));
-    row1.removeFromRight (8);
-    mirrorButton.setBounds (row1.removeFromRight (96));
-    row1.removeFromRight (6);
-    lensBox.setBounds (row1.removeFromRight (150));
-    row1.removeFromRight (6);
-    cameraBox.setBounds (row1);
+    struct Item
+    {
+        juce::Component* component;
+        int width;       // ширина; для растягиваемых это минимальная ширина
+        bool flexible;   // забирает свободное место в своей строке
+    };
 
-    // Вторая строка: звук, микрофон, режим записи звука, язык
-    langButton.setBounds (row2.removeFromRight (130));
-    row2.removeFromRight (6);
-    modeBox.setBounds (row2.removeFromRight (190));
-    row2.removeFromRight (6);
-    audioButton.setBounds (row2.removeFromLeft (120));
-    row2.removeFromLeft (6);
-    micBox.setBounds (row2);
+    const Item items[] =
+    {
+        { &cameraBox,    flexibleMin, true  },
+        { &lensBox,      150,         false },
+        { &mirrorButton, 96,          false },
+        { &recordButton, 90,          false },
+        { &folderButton, 100,         false },
+        { &audioButton,  120,         false },
+        { &micBox,       flexibleMin, true  },
+        { &modeBox,      190,         false },
+        { &langButton,   130,         false },
+    };
+
+    constexpr int numItems = (int) (sizeof (items) / sizeof (items[0]));
+
+    // Разбиваем на строки: новый элемент идёт в текущую строку, пока помещается
+    int rowOf[numItems] = {};
+    int numRows = 1, used = 0;
+
+    for (int i = 0; i < numItems; ++i)
+    {
+        const int w = juce::jmin (items[i].width, availableWidth);
+        const int needed = (used == 0 ? 0 : gap) + w;
+
+        if (used > 0 && used + needed > availableWidth)
+        {
+            ++numRows;
+            used = 0;
+        }
+
+        used += (used == 0 ? 0 : gap) + w;
+        rowOf[i] = numRows - 1;
+    }
+
+    const int panelHeight = 2 * pad + numRows * rowHeight + (numRows - 1) * gap;
+    topBar.setBounds (8, 8, panelWidth, panelHeight);
+
+    // Раскладываем каждую строку; свободное место делят между растягиваемыми элементами строки
+    for (int row = 0; row < numRows; ++row)
+    {
+        int firstItem = -1, count = 0, fixedTotal = 0, flexCount = 0;
+
+        for (int i = 0; i < numItems; ++i)
+        {
+            if (rowOf[i] != row)
+                continue;
+
+            if (firstItem < 0)
+                firstItem = i;
+
+            ++count;
+            const int w = juce::jmin (items[i].width, availableWidth);
+            fixedTotal += w;
+
+            if (items[i].flexible)
+                ++flexCount;
+        }
+
+        const int freeSpace = juce::jmax (0, availableWidth - fixedTotal - (count - 1) * gap);
+        const int extraEach = flexCount > 0 ? freeSpace / flexCount : 0;
+
+        int x = pad;
+        const int y = pad + row * (rowHeight + gap);
+
+        for (int i = firstItem; i < numItems && rowOf[i] == row; ++i)
+        {
+            int w = juce::jmin (items[i].width, availableWidth);
+
+            if (items[i].flexible)
+                w += extraEach;
+
+            items[i].component->setBounds (x, y, w, rowHeight);
+            x += w + gap;
+        }
+    }
 
     repaint();
 }

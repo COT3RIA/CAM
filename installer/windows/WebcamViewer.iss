@@ -1,13 +1,14 @@
-; Inno Setup script for Webcam Viewer (Windows)
+; Inno Setup script for CAM by COTERIA (Windows)
 ; Build: iscc installer\windows\WebcamViewer.iss  (run from the repository root after the CMake build)
 
-#define MyAppName "Webcam Viewer"
+#define MyAppName "CAM"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "WebcamViewer"
+#define MyAppPublisher "COTERIA"
 #define ArtefactsDir "..\..\build\WebcamVST_artefacts\Release"
 
 [Setup]
-AppId={{7B1E6C3A-4D52-4F0E-9A6B-3C5E8D2F1A47}
+; Новый идентификатор: CAM считается новым продуктом (прежний "Webcam Viewer" остаётся отдельным)
+AppId={{D3A6F1B2-8C47-4E9A-B5D0-6F2E1C7A9B38}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -18,7 +19,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 OutputDir=..\..\installer_out
-OutputBaseFilename=WebcamViewer-Setup-Windows
+OutputBaseFilename=CAM-Setup-Windows
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -40,12 +41,16 @@ Name: "custom"; Description: "Custom installation"; Flags: iscustom
 Name: "vst3"; Description: "VST3 plugin (C:\Program Files\Common Files\VST3)"; Types: full plugin custom; Flags: fixed
 Name: "standalone"; Description: "Standalone app (for testing the camera without a DAW)"; Types: full
 
+[InstallDelete]
+; Убираем старую версию плагина под прежним именем, чтобы в DAW не было двух копий
+Type: filesandordirs; Name: "{commoncf64}\VST3\Webcam Viewer.vst3"
+
 [Files]
-Source: "{#ArtefactsDir}\VST3\Webcam Viewer.vst3\*"; DestDir: "{commoncf64}\VST3\Webcam Viewer.vst3"; Components: vst3; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "{#ArtefactsDir}\Standalone\Webcam Viewer.exe"; DestDir: "{app}"; Components: standalone; Flags: ignoreversion
+Source: "{#ArtefactsDir}\VST3\CAM.vst3\*"; DestDir: "{commoncf64}\VST3\CAM.vst3"; Components: vst3; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#ArtefactsDir}\Standalone\CAM.exe"; DestDir: "{app}"; Components: standalone; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\Webcam Viewer.exe"; Components: standalone
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\CAM.exe"; Components: standalone
 
 [Run]
-Filename: "{app}\Webcam Viewer.exe"; Description: "Launch Webcam Viewer (standalone)"; Flags: nowait postinstall skipifsilent unchecked; Components: standalone
+Filename: "{app}\CAM.exe"; Description: "Launch CAM (standalone)"; Flags: nowait postinstall skipifsilent unchecked; Components: standalone

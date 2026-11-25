@@ -1,4 +1,4 @@
-# Webcam Viewer (VST3)
+# CAM by COTERIA (VST3)
 
 Плагин показывает веб-камеру в своём окне внутри DAW, умеет записывать видео (с микрофоном и без),
 имитировать объективы и работает на русском и английском. Аудио проходит через плагин без изменений.
@@ -7,14 +7,17 @@
 
 1. Создайте репозиторий на GitHub и залейте в него содержимое проекта (структуру папок не менять).
 2. Откройте вкладку **Actions**, дождитесь окончания сборки (первая занимает 5-10 минут).
-3. В разделе **Artifacts** скачайте установщик (`WebcamViewer-Installer-Windows` или `WebcamViewer-Installer-macOS`)
-   либо «голые» файлы плагина (`WebcamViewer-Windows` / `WebcamViewer-macOS`).
+3. В разделе **Artifacts** скачайте установщик (`CAM-Installer-Windows` или `CAM-Installer-macOS`)
+   либо «голые» файлы плагина (`CAM-Windows` / `CAM-macOS`).
 
 ## Установка без установщика
 
-- **Windows:** папку `Webcam Viewer.vst3` в `C:\Program Files\Common Files\VST3`, затем пересканируйте плагины в DAW.
-- **macOS:** `Webcam Viewer.vst3` в `/Library/Audio/Plug-Ins/VST3`. Если macOS блокирует плагин после скачивания:
-  `xattr -cr "/Library/Audio/Plug-Ins/VST3/Webcam Viewer.vst3"`
+- **Windows:** папку `CAM.vst3` в `C:\Program Files\Common Files\VST3`, затем пересканируйте плагины в DAW.
+- **macOS:** `CAM.vst3` в `/Library/Audio/Plug-Ins/VST3`. Если macOS блокирует плагин после скачивания:
+  `xattr -cr "/Library/Audio/Plug-Ins/VST3/CAM.vst3"`
+
+Если раньше стоял плагин под именем «Webcam Viewer», удалите `Webcam Viewer.vst3` из папки VST3, иначе
+в DAW будет две копии. Установщик для Windows удаляет старую версию сам.
 
 Standalone-версия удобна, чтобы проверить камеру и микрофон без DAW.
 
@@ -30,7 +33,7 @@ Standalone-версия удобна, чтобы проверить камеру
 
 ## Запись
 
-Файлы сохраняются в папку `Movies/WebcamViewer` (кнопка «Папка» открывает её).
+Файлы сохраняются в папку `Movies/CAM` (кнопка «Папка» открывает её).
 
 | Настройка | Что получится |
 |---|---|
