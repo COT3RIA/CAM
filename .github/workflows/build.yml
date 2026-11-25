@@ -1,4 +1,4 @@
-name: Build Webcam VST
+name: Build CAM
 
 on:
   push:
@@ -58,7 +58,7 @@ jobs:
       - name: Upload plugin files
         uses: actions/upload-artifact@v4
         with:
-          name: WebcamViewer-${{ matrix.name }}
+          name: CAM-${{ matrix.name }}
           path: |
             build/WebcamVST_artefacts/Release/VST3
             build/WebcamVST_artefacts/Release/Standalone
@@ -67,6 +67,6 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: WebcamViewer-Installer-${{ matrix.name }}
+          name: CAM-Installer-${{ matrix.name }}
           path: installer_out/*
           if-no-files-found: error
