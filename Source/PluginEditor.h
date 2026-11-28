@@ -49,9 +49,13 @@ private:
     void cameraOpened (std::unique_ptr<juce::CameraDevice> device, const juce::String& error);
     void closeCamera();
     void toggleRecording();
-    void startRecording();
+    void startRecording (bool byTransport = false);
     void stopRecordingInternal();
     void refreshDisplay();
+    void pollTransport();
+    AudioSettings makeAudioSettings() const;
+    juce::String resolveProjectName() const;
+    juce::String makeUniqueBaseName (const juce::File& folder) const;
 
     void setStatus (loc::Text id, const juce::String& arg = {});
     juce::String getStatusText() const;
@@ -76,9 +80,12 @@ private:
     juce::StringArray cameraNames, micNames;
 
     OverlayPanel topBar;
-    juce::ComboBox cameraBox, lensBox, micBox, modeBox;
-    juce::ToggleButton mirrorButton, audioButton;
+    juce::ComboBox cameraBox, lensBox, audioBox, micBox, modeBox;
+    juce::ToggleButton mirrorButton, syncButton;
     juce::TextButton recordButton, folderButton, langButton;
+    juce::Label offsetLabel;
+    juce::Slider offsetSlider;
+    juce::TextEditor projectEdit;
 
     loc::Text statusId = loc::Text::none;
     juce::String statusArg;
@@ -97,6 +104,9 @@ private:
     juce::uint32 openedAtMs = 0;
 
     bool recording = false;
+    bool recordedByTransport = false;
+    bool prevHostPlaying = false;
+    bool hostWarned = false;
     RecordKind recordKind = RecordKind::none;
     juce::uint32 recordStartMs = 0;
     juce::String recordingInfo;

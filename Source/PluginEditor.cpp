@@ -1,4 +1,6 @@
 #include "PluginEditor.h"
+#include "FileNaming.h"
+#include "HostProject.h"
 
 namespace
 {
@@ -23,8 +25,8 @@ namespace
     constexpr int kNumLenses = (int) (sizeof (kLenses) / sizeof (kLenses[0]));
 
     // Размеры окна: 16:9 по умолчанию, соотношение потом подстраивается под камеру
-    // Минимум 384x216: при такой ширине панель настроек переносит кнопки на несколько строк
-    constexpr int kMinW = 384, kMinH = 216, kMaxW = 1920, kMaxH = 1080;
+    // Минимум 480x270: при такой ширине панель настроек переносит кнопки на несколько строк
+    constexpr int kMinW = 480, kMinH = 270, kMaxW = 1920, kMaxH = 1080;
     constexpr int kStartW = 640, kStartH = 360;
 
     const juce::Colour kControlBg   (0x66000000);
@@ -128,10 +130,25 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     topBar.addAndMakeVisible (mirrorButton);
     topBar.addAndMakeVisible (recordButton);
     topBar.addAndMakeVisible (folderButton);
-    topBar.addAndMakeVisible (audioButton);
+    topBar.addAndMakeVisible (audioBox);
     topBar.addAndMakeVisible (micBox);
     topBar.addAndMakeVisible (modeBox);
+    topBar.addAndMakeVisible (offsetLabel);
+    topBar.addAndMakeVisible (offsetSlider);
+    topBar.addAndMakeVisible (syncButton);
+    topBar.addAndMakeVisible (projectEdit);
     topBar.addAndMakeVisible (langButton);
+
+    offsetSlider.setSliderStyle (juce::Slider::IncDecButtons);
+    offsetSlider.setRange (-2000.0, 2000.0, 5.0);
+    offsetSlider.setIncDecButtonsMode (juce::Slider::incDecButtonsDraggable_Horizontal);
+    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 64, 28);
+    offsetSlider.setValue (proc.audioOffsetMs, juce::dontSendNotification);
+
+    projectEdit.setMultiLine (false);
+    projectEdit.setReturnKeyStartsNewLine (false);
+    projectEdit.setText (proc.projectName, false);
+    projectEdit.setInputRestrictions (60);
 
     styleControls();
 
@@ -152,7 +169,8 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     micNames = MicCapture::getInputDeviceNames();
 
     mirrorButton.setToggleState (proc.mirror, juce::dontSendNotification);
-    audioButton.setToggleState (proc.recordAudio, juce::dontSendNotification);
+    syncButton.setToggleState (proc.syncTransport, juce::dontSendNotification);
+    prevHostPlaying = proc.hostPlaying.load();
 
     populateMicBox();
     applyLanguage();       // заполняет объективы и режимы и расставляет надписи
@@ -176,10 +194,29 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
         repaint();
     };
 
-    audioButton.onClick = [this]
+    audioBox.onChange = [this]
     {
-        proc.recordAudio = audioButton.getToggleState();
+        proc.audioSource = juce::jlimit (0, 2, audioBox.getSelectedItemIndex());
         updateControlsEnabled();
+    };
+
+    offsetSlider.onValueChange = [this]
+    {
+        proc.audioOffsetMs = juce::roundToInt (offsetSlider.getValue());
+    };
+
+    projectEdit.onTextChange = [this]
+    {
+        proc.projectName = projectEdit.getText();
+    };
+
+    syncButton.onClick = [this]
+    {
+        proc.syncTransport = syncButton.getToggleState();
+        prevHostPlaying = proc.hostPlaying.load(); // уже идущее воспроизведение запись не запускает
+
+        if (proc.syncTransport && ! recording)
+            setStatus (loc::Text::syncWaiting);
     };
 
     micBox.onChange = [this]
@@ -233,7 +270,7 @@ WebcamAudioProcessorEditor::~WebcamAudioProcessorEditor()
 //==============================================================================
 void WebcamAudioProcessorEditor::styleControls()
 {
-    for (auto* box : { &cameraBox, &lensBox, &micBox, &modeBox })
+    for (auto* box : { &cameraBox, &lensBox, &audioBox, &micBox, &modeBox })
     {
         box->setColour (juce::ComboBox::backgroundColourId, kControlBg);
         box->setColour (juce::ComboBox::outlineColourId, kControlLine);
@@ -249,12 +286,31 @@ void WebcamAudioProcessorEditor::styleControls()
         button->setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     }
 
-    for (auto* toggle : { &mirrorButton, &audioButton })
+    for (auto* toggle : { &mirrorButton, &syncButton })
     {
         toggle->setColour (juce::ToggleButton::textColourId, juce::Colours::white);
         toggle->setColour (juce::ToggleButton::tickColourId, juce::Colours::white);
         toggle->setColour (juce::ToggleButton::tickDisabledColourId, juce::Colours::grey);
     }
+
+    offsetLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    offsetLabel.setJustificationType (juce::Justification::centredRight);
+    offsetLabel.setFont (juce::FontOptions (13.0f));
+
+    offsetSlider.setColour (juce::Slider::textBoxTextColourId, juce::Colours::white);
+    offsetSlider.setColour (juce::Slider::textBoxBackgroundColourId, kControlBg);
+    offsetSlider.setColour (juce::Slider::textBoxOutlineColourId, kControlLine);
+    offsetSlider.setColour (juce::Slider::textBoxHighlightColourId, juce::Colour (0xff3a6ea5));
+    offsetSlider.setColour (juce::Slider::backgroundColourId, kControlBg);
+    offsetSlider.setColour (juce::Slider::thumbColourId, juce::Colours::white);
+    offsetSlider.setColour (juce::Slider::trackColourId, juce::Colours::white);
+
+    projectEdit.setColour (juce::TextEditor::backgroundColourId, kControlBg);
+    projectEdit.setColour (juce::TextEditor::textColourId, juce::Colours::white);
+    projectEdit.setColour (juce::TextEditor::outlineColourId, kControlLine);
+    projectEdit.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0x99ffffff));
+    projectEdit.setColour (juce::TextEditor::highlightColourId, juce::Colour (0xff3a6ea5));
+    projectEdit.setColour (juce::CaretComponent::caretColourId, juce::Colours::white);
 }
 
 void WebcamAudioProcessorEditor::populateMicBox()
@@ -273,7 +329,16 @@ void WebcamAudioProcessorEditor::populateMicBox()
 void WebcamAudioProcessorEditor::applyLanguage()
 {
     mirrorButton.setButtonText (tr (loc::Text::mirror));
-    audioButton.setButtonText (tr (loc::Text::recordAudio));
+    syncButton.setButtonText (tr (loc::Text::syncTransport));
+    offsetLabel.setText (tr (loc::Text::offsetLabel), juce::dontSendNotification);
+    offsetSlider.setTextValueSuffix (" " + tr (loc::Text::msUnit));
+    projectEdit.setTextToShowWhenEmpty (tr (loc::Text::projectHint), juce::Colour (0x99ffffff));
+
+    audioBox.clear (juce::dontSendNotification);
+    audioBox.addItem (tr (loc::Text::audioOff), 1);
+    audioBox.addItem (tr (loc::Text::audioMic), 2);
+    audioBox.addItem (tr (loc::Text::audioHost), 3);
+    audioBox.setSelectedItemIndex (juce::jlimit (0, 2, proc.audioSource), juce::dontSendNotification);
     folderButton.setButtonText (tr (loc::Text::openFolder));
     langButton.setButtonText (tr (loc::Text::languageButton));
     recordButton.setButtonText (tr (recording ? loc::Text::stop : loc::Text::record));
@@ -301,10 +366,23 @@ void WebcamAudioProcessorEditor::updateControlsEnabled()
 {
     const bool idle = ! recording;
 
+    const int source = proc.audioSource;
+
     cameraBox.setEnabled (idle);
-    audioButton.setEnabled (idle);
-    micBox.setEnabled (idle && proc.recordAudio);
-    modeBox.setEnabled (idle && proc.recordAudio);
+    audioBox.setEnabled (idle);
+    micBox.setEnabled (idle);
+    modeBox.setEnabled (idle);
+    offsetSlider.setEnabled (idle);
+    projectEdit.setEnabled (idle);
+
+    // Лишние настройки прячутся: микрофон нужен только для микрофона, сдвиг только для звука DAW
+    micBox.setVisible (source == 1);
+    modeBox.setVisible (source != 0);
+    offsetLabel.setVisible (source == 2);
+    offsetSlider.setVisible (source == 2);
+
+    if (getWidth() > 0)
+        resized();
 }
 
 // Если сохранённый микрофон отключили, пишем с устройства по умолчанию
@@ -334,7 +412,8 @@ void WebcamAudioProcessorEditor::updateOverlay()
 
     const bool hovered = isMouseOver (true)
                           || cameraBox.isPopupActive() || lensBox.isPopupActive()
-                          || micBox.isPopupActive() || modeBox.isPopupActive();
+                          || micBox.isPopupActive() || modeBox.isPopupActive() || audioBox.isPopupActive()
+                          || projectEdit.hasKeyboardFocus (true);
 
     if (hovered)
         showUntilMs = now + 500;
@@ -473,6 +552,17 @@ void WebcamAudioProcessorEditor::imageReceived (const juce::Image& image)
 void WebcamAudioProcessorEditor::timerCallback()
 {
     updateOverlay();
+    pollTransport();
+
+    // Звук DAW не приходит: плагин не на мастер-канале или хост не вызывает обработку
+    if (recording && ! hostWarned && recordKind != RecordKind::nativeVideo
+        && proc.audioSource == 2 && juce::Time::getMillisecondCounter() - recordStartMs > 2000
+        && proc.hostCapture.getBlocksPushed() == 0)
+    {
+        hostWarned = true;
+        showUntilMs = juce::Time::getMillisecondCounter() + 6000;
+        setStatus (loc::Text::hostNoAudio);
+    }
 
     // Запись остановилась из-за ошибки (например, закончилось место на диске)
     if (recording && avRecorder != nullptr && avRecorder->hasFailed())
@@ -537,7 +627,7 @@ void WebcamAudioProcessorEditor::toggleRecording()
 {
     if (! recording)
     {
-        startRecording();
+        startRecording (false);
     }
     else
     {
@@ -546,7 +636,81 @@ void WebcamAudioProcessorEditor::toggleRecording()
     }
 }
 
-void WebcamAudioProcessorEditor::startRecording()
+// Запись стартует и останавливается вместе с Play/Stop в DAW (если включена синхронизация)
+void WebcamAudioProcessorEditor::pollTransport()
+{
+    const bool playing = proc.hostPlaying.load();
+    const bool started = playing && ! prevHostPlaying;
+    const bool stopped = ! playing && prevHostPlaying;
+    prevHostPlaying = playing;
+
+    if (! proc.syncTransport)
+        return;
+
+    if (started && ! recording)
+    {
+        startRecording (true);
+    }
+    else if (stopped && recording && recordedByTransport)
+    {
+        stopRecordingInternal();
+        setStatus (loc::Text::saved, recordingInfo);
+    }
+}
+
+AudioSettings WebcamAudioProcessorEditor::makeAudioSettings() const
+{
+    AudioSettings settings;
+
+    if (proc.audioSource == 2)
+    {
+        settings.source = AudioSettings::Source::host;
+        settings.host = &proc.hostCapture;
+        settings.offsetMs = proc.audioOffsetMs;
+    }
+    else
+    {
+        settings.source = AudioSettings::Source::microphone;
+        settings.micName = getEffectiveMicName();
+    }
+
+    return settings;
+}
+
+// Поле в плагине важнее автоопределения: пользователь сам знает, как назвать запись
+juce::String WebcamAudioProcessorEditor::resolveProjectName() const
+{
+    const auto manual = proc.projectName.trim();
+
+    if (manual.isNotEmpty())
+        return manual;
+
+    return detectHostProjectName();
+}
+
+// <проект>_<BPM>bpm_<дата>; если такой файл уже есть (две записи за секунду), добавляется номер
+juce::String WebcamAudioProcessorEditor::makeUniqueBaseName (const juce::File& folder) const
+{
+    const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
+    const auto base = juce::String::fromUTF8 (
+        naming::buildBaseName (resolveProjectName().toStdString(), proc.hostBpm.load(), stamp.toStdString()).c_str());
+
+    for (int n = 1; n < 1000; ++n)
+    {
+        const auto candidate = n == 1 ? base : base + "_" + juce::String (n);
+        bool taken = false;
+
+        for (auto ext : { ".wmv", ".mov", ".avi", ".wav" })
+            taken = taken || folder.getChildFile (candidate + ext).exists();
+
+        if (! taken)
+            return candidate;
+    }
+
+    return base;
+}
+
+void WebcamAudioProcessorEditor::startRecording (bool byTransport)
 {
     if (camera == nullptr)
     {
@@ -557,7 +721,7 @@ void WebcamAudioProcessorEditor::startRecording()
     auto folder = getRecordingsFolder();
     folder.createDirectory();
 
-    const juce::String baseName = "webcam_" + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
+    const juce::String baseName = makeUniqueBaseName (folder);
 
    #if JUCE_WINDOWS
     const juce::String videoExt = ".wmv";
@@ -567,7 +731,16 @@ void WebcamAudioProcessorEditor::startRecording()
 
     const auto videoFile = folder.getChildFile (baseName + videoExt);
 
-    if (! proc.recordAudio)
+    // Звук DAW: нужно, чтобы хост уже сообщил частоту дискретизации (prepareToPlay)
+    if (proc.audioSource == 2 && proc.hostCapture.getSampleRate() <= 0.0)
+    {
+        setStatus (loc::Text::hostNotReady);
+        return;
+    }
+
+    const auto audio = makeAudioSettings();
+
+    if (proc.audioSource == 0)
     {
         // Только видео: пишет сама камера
         camera->startRecordingToFile (videoFile, 2);
@@ -589,8 +762,7 @@ void WebcamAudioProcessorEditor::startRecording()
         avRecorder->pushFrame (currentFrame);
 
         const auto error = avRecorder->start (AvRecorder::Mode::aviWithAudio, aviFile,
-                                              currentFrame.getWidth(), currentFrame.getHeight(),
-                                              getEffectiveMicName());
+                                              currentFrame.getWidth(), currentFrame.getHeight(), audio);
 
         if (error.isNotEmpty())
         {
@@ -604,13 +776,13 @@ void WebcamAudioProcessorEditor::startRecording()
     }
     else
     {
-        // Звук отдельным WAV-файлом, видео пишет камера. Микрофон открывается первым (это долго),
-        // но в файл звук идёт только с момента запуска записи видео.
+        // Звук отдельным WAV-файлом, видео пишет камера. Источник звука открывается первым (микрофон
+        // открывается долго), но в файл звук идёт только с момента запуска записи видео.
         const auto wavFile = folder.getChildFile (baseName + ".wav");
 
         avRecorder = std::make_unique<AvRecorder>();
 
-        const auto error = avRecorder->start (AvRecorder::Mode::wavOnly, wavFile, 0, 0, getEffectiveMicName());
+        const auto error = avRecorder->start (AvRecorder::Mode::wavOnly, wavFile, 0, 0, audio);
 
         if (error.isNotEmpty())
         {
@@ -626,6 +798,8 @@ void WebcamAudioProcessorEditor::startRecording()
     }
 
     recording = true;
+    recordedByTransport = byTransport;
+    hostWarned = false;
     recordStartMs = juce::Time::getMillisecondCounter();
     recordButton.setButtonText (tr (loc::Text::stop));
     recordButton.setColour (juce::TextButton::buttonColourId, kRecordingBg);
@@ -648,6 +822,7 @@ void WebcamAudioProcessorEditor::stopRecordingInternal()
 
     recordKind = RecordKind::none;
     recording = false;
+    recordedByTransport = false;
 
     recordButton.setButtonText (tr (loc::Text::record));
     recordButton.setColour (juce::TextButton::buttonColourId, kControlBg);
@@ -749,6 +924,7 @@ void WebcamAudioProcessorEditor::resized()
 {
     // Панель с настройками лежит поверх видео, видео занимает всё окно.
     // Кнопки раскладываются по строкам автоматически: чем уже окно, тем больше строк.
+    // Скрытые элементы (например, микрофон при записи звука DAW) места не занимают.
     constexpr int pad = 8, gap = 6, rowHeight = 28, flexibleMin = 110;
 
     const int panelWidth = juce::jmax (0, getWidth() - 16);
@@ -761,28 +937,45 @@ void WebcamAudioProcessorEditor::resized()
         bool flexible;   // забирает свободное место в своей строке
     };
 
-    const Item items[] =
-    {
-        { &cameraBox,    flexibleMin, true  },
-        { &lensBox,      150,         false },
-        { &mirrorButton, 96,          false },
-        { &recordButton, 90,          false },
-        { &folderButton, 100,         false },
-        { &audioButton,  120,         false },
-        { &micBox,       flexibleMin, true  },
-        { &modeBox,      190,         false },
-        { &langButton,   130,         false },
-    };
+    const int source = proc.audioSource;
 
-    constexpr int numItems = (int) (sizeof (items) / sizeof (items[0]));
+    std::vector<Item> items;
+    items.push_back ({ &cameraBox,    flexibleMin, true  });
+    items.push_back ({ &lensBox,      150,         false });
+    items.push_back ({ &mirrorButton, 96,          false });
+    items.push_back ({ &recordButton, 90,          false });
+    items.push_back ({ &folderButton, 100,         false });
+    items.push_back ({ &audioBox,     170,         false });
+
+    if (source == 1) items.push_back ({ &micBox,       flexibleMin, true  });
+    if (source != 0) items.push_back ({ &modeBox,      190,         false });
+    if (source == 2) items.push_back ({ &offsetLabel,  92,          false });
+    if (source == 2) items.push_back ({ &offsetSlider, 130,         false });
+
+    items.push_back ({ &syncButton,   160,         false });
+    items.push_back ({ &projectEdit,  flexibleMin, true  });
+    items.push_back ({ &langButton,   130,         false });
+
+    const int numItems = (int) items.size();
+
+    // Скрытые компоненты не должны оставаться видимыми
+    for (auto* c : std::initializer_list<juce::Component*> { &micBox, &modeBox, &offsetLabel, &offsetSlider })
+    {
+        bool used = false;
+
+        for (const auto& item : items)
+            used = used || item.component == c;
+
+        c->setVisible (used);
+    }
 
     // Разбиваем на строки: новый элемент идёт в текущую строку, пока помещается
-    int rowOf[numItems] = {};
+    std::vector<int> rowOf ((size_t) numItems, 0);
     int numRows = 1, used = 0;
 
     for (int i = 0; i < numItems; ++i)
     {
-        const int w = juce::jmin (items[i].width, availableWidth);
+        const int w = juce::jmin (items[(size_t) i].width, availableWidth);
         const int needed = (used == 0 ? 0 : gap) + w;
 
         if (used > 0 && used + needed > availableWidth)
@@ -792,7 +985,7 @@ void WebcamAudioProcessorEditor::resized()
         }
 
         used += (used == 0 ? 0 : gap) + w;
-        rowOf[i] = numRows - 1;
+        rowOf[(size_t) i] = numRows - 1;
     }
 
     const int panelHeight = 2 * pad + numRows * rowHeight + (numRows - 1) * gap;
@@ -805,17 +998,16 @@ void WebcamAudioProcessorEditor::resized()
 
         for (int i = 0; i < numItems; ++i)
         {
-            if (rowOf[i] != row)
+            if (rowOf[(size_t) i] != row)
                 continue;
 
             if (firstItem < 0)
                 firstItem = i;
 
             ++count;
-            const int w = juce::jmin (items[i].width, availableWidth);
-            fixedTotal += w;
+            fixedTotal += juce::jmin (items[(size_t) i].width, availableWidth);
 
-            if (items[i].flexible)
+            if (items[(size_t) i].flexible)
                 ++flexCount;
         }
 
@@ -825,14 +1017,14 @@ void WebcamAudioProcessorEditor::resized()
         int x = pad;
         const int y = pad + row * (rowHeight + gap);
 
-        for (int i = firstItem; i < numItems && rowOf[i] == row; ++i)
+        for (int i = firstItem; i < numItems && rowOf[(size_t) i] == row; ++i)
         {
-            int w = juce::jmin (items[i].width, availableWidth);
+            int w = juce::jmin (items[(size_t) i].width, availableWidth);
 
-            if (items[i].flexible)
+            if (items[(size_t) i].flexible)
                 w += extraEach;
 
-            items[i].component->setBounds (x, y, w, rowHeight);
+            items[(size_t) i].component->setBounds (x, y, w, rowHeight);
             x += w + gap;
         }
     }

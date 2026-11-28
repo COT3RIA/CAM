@@ -7,6 +7,8 @@
 #include <memory>
 #include <vector>
 
+#include "AudioAligner.h"
+#include "HostAudio.h"
 #include "MediaWriters.h"
 
 //==============================================================================
@@ -50,9 +52,22 @@ private:
 };
 
 //==============================================================================
+// Откуда брать звук для записи
+struct AudioSettings
+{
+    enum class Source { microphone, host };
+
+    Source source = Source::microphone;
+    juce::String micName;               // микрофон: пусто = по умолчанию
+    HostAudioCapture* host = nullptr;   // звук DAW (стерео)
+    int offsetMs = 0;                   // только для звука DAW: + звук позже видео, - раньше
+};
+
+//==============================================================================
 // Запись в фоновом потоке:
-//  - aviWithAudio: один AVI-файл (MJPEG-видео из кадров камеры + звук с микрофона);
+//  - aviWithAudio: один AVI-файл (MJPEG-видео из кадров камеры + звук);
 //  - wavOnly: только звук в WAV (видео в это время пишет сама камера).
+// Звук: микрофон (моно) или мастер-шина DAW (стерео).
 // Длинные AVI-записи автоматически делятся на части (_part2, _part3 ...).
 class AvRecorder : private juce::Thread
 {
@@ -64,12 +79,12 @@ public:
 
     // Возвращает текст ошибки или пустую строку. Для aviWithAudio нужен размер кадров камеры.
     juce::String start (Mode modeToUse, const juce::File& file, int videoWidth, int videoHeight,
-                        const juce::String& micName);
+                        const AudioSettings& audio);
 
     // Новый кадр камеры (только для aviWithAudio). Кадр после передачи не менять.
     void pushFrame (const juce::Image& frame);
 
-    // Только для wavOnly: микрофон уже открыт, но звук в файл не пишется, пока не вызван этот метод.
+    // Только для wavOnly: источник звука уже открыт, но звук в файл не пишется, пока не вызван этот метод.
     // Вызывать сразу после запуска записи видео камерой, чтобы начало звука совпало с началом видео.
     void beginAudio();
 
@@ -83,14 +98,25 @@ private:
     bool openPart (int partIndex);
     bool encodeFrame (const juce::Image& frame);
     bool writeVideoFrame();
+    bool writePcm (const int16_t* data, int numFrames);
+    bool writeSilence (int64_t numFrames);
     void pumpAudio (bool flushAll);
     void finishFiles();
 
+    int audioAvailable() const;
+    int audioRead (float* dest, int maxFrames);
+    void audioDiscard();
+
     Mode mode = Mode::aviWithAudio;
     juce::File baseFile;
-    int width = 0, height = 0, sampleRate = 48000, part = 1;
+    int width = 0, height = 0, sampleRate = 48000, channels = 1, part = 1;
 
-    MicCapture mic;
+    AudioSettings settings;
+    std::unique_ptr<MicCapture> mic;
+    HostAudioCapture* activeHost = nullptr;
+    media::AudioAligner aligner { 48000, 0, false };
+    int64_t audioFramesWritten = 0;
+
     std::unique_ptr<media::AviWriter> avi;
     std::unique_ptr<media::WavWriter> wav;
 

@@ -2,6 +2,10 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
+
+#include "HostAudio.h"
+
 // Аудио-часть плагина: просто пропускает звук без изменений.
 // Вся "полезная" работа (камера, линзы, запись) живёт в редакторе (окне плагина).
 class WebcamAudioProcessor : public juce::AudioProcessor
@@ -39,9 +43,19 @@ public:
     bool mirror = false;
 
     int language = 0;          // 0 = English, 1 = Русский (при первом запуске берётся язык системы)
-    bool recordAudio = false;  // писать ли звук с микрофона
+    int audioSource = 0;       // 0 = без звука, 1 = микрофон, 2 = мастер-шина DAW
     int audioMode = 0;         // 0 = вместе с видео (один AVI-файл), 1 = отдельным файлом (WAV)
     juce::String micName;      // пусто = микрофон по умолчанию
+    int audioOffsetMs = 0;     // сдвиг звука DAW относительно видео: + позже, - раньше
+    bool syncTransport = false; // старт и стоп записи вместе с Play/Stop в DAW
+    juce::String projectName;  // название проекта для имени файла (пусто = определить автоматически)
+
+    // Состояние транспорта DAW (обновляется в аудиопотоке, читается окном)
+    std::atomic<bool> hostPlaying { false };
+    std::atomic<double> hostBpm { 0.0 };
+
+    // Звук, пришедший от DAW на вход плагина
+    HostAudioCapture hostCapture;
 
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WebcamAudioProcessor)

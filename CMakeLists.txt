@@ -52,6 +52,11 @@ target_sources(WebcamVST PRIVATE
     Source/Recorder.h
     Source/MediaWriters.h
     Source/Strings.h
+    Source/HostAudio.h
+    Source/HostProject.cpp
+    Source/HostProject.h
+    Source/FileNaming.h
+    Source/AudioAligner.h
 )
 
 target_compile_definitions(WebcamVST PUBLIC

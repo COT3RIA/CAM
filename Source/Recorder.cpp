@@ -175,16 +175,40 @@ void MicCapture::audioDeviceIOCallbackWithContext (const float* const* inputChan
 }
 
 //==============================================================================
-AvRecorder::AvRecorder() : juce::Thread ("Webcam AV recorder")
+AvRecorder::AvRecorder() : juce::Thread ("CAM AV recorder")
 {
     jpeg.setQuality (0.8f);
-    floatBuffer.resize (16384);
-    pcmBuffer.resize (16384);
+    floatBuffer.resize (16384 * 2);
+    pcmBuffer.resize (16384 * 2);
 }
 
 AvRecorder::~AvRecorder()
 {
     stop();
+}
+
+int AvRecorder::audioAvailable() const
+{
+    if (activeHost != nullptr)
+        return activeHost->getNumAvailable();
+
+    return mic != nullptr ? mic->getNumAvailable() : 0;
+}
+
+int AvRecorder::audioRead (float* dest, int maxFrames)
+{
+    if (activeHost != nullptr)
+        return activeHost->read (dest, maxFrames);
+
+    return mic != nullptr ? mic->read (dest, maxFrames) : 0;
+}
+
+void AvRecorder::audioDiscard()
+{
+    if (activeHost != nullptr)
+        activeHost->discardAll();
+    else if (mic != nullptr)
+        mic->discardAll();
 }
 
 bool AvRecorder::openPart (int partIndex)
@@ -204,15 +228,15 @@ bool AvRecorder::openPart (int partIndex)
     if (mode == Mode::aviWithAudio)
     {
         avi = std::make_unique<media::AviWriter> (std::move (sink));
-        return avi->begin (width, height, kFps, sampleRate, 1);
+        return avi->begin (width, height, kFps, sampleRate, channels);
     }
 
     wav = std::make_unique<media::WavWriter> (std::move (sink));
-    return wav->begin (sampleRate, 1);
+    return wav->begin (sampleRate, channels);
 }
 
 juce::String AvRecorder::start (Mode modeToUse, const juce::File& file, int videoWidth, int videoHeight,
-                                const juce::String& micName)
+                                const AudioSettings& audio)
 {
     stop();
 
@@ -221,6 +245,8 @@ juce::String AvRecorder::start (Mode modeToUse, const juce::File& file, int vide
     width = videoWidth;
     height = videoHeight;
     part = 1;
+    settings = audio;
+    audioFramesWritten = 0;
     failed.store (false);
     startRequested.store (mode == Mode::aviWithAudio); // для WAV ждём beginAudio()
     lastJpeg.clear();
@@ -228,31 +254,70 @@ juce::String AvRecorder::start (Mode modeToUse, const juce::File& file, int vide
     if (mode == Mode::aviWithAudio && (width < 2 || height < 2))
         return "no video frames yet";
 
-    const auto error = mic.start (micName);
+    const bool fromHost = (settings.source == AudioSettings::Source::host);
 
-    if (error.isNotEmpty())
-        return error;
-
-    sampleRate = juce::roundToInt (mic.getSampleRate());
-
-    if (sampleRate <= 0)
+    if (fromHost)
     {
-        mic.stop();
-        return "the input device reported no sample rate";
+        if (settings.host == nullptr)
+            return "no DAW audio source";
+
+        sampleRate = juce::roundToInt (settings.host->getSampleRate());
+
+        if (sampleRate <= 0)
+            return "DAW audio is not ready yet";
+
+        channels = 2;
+        activeHost = settings.host;
+        activeHost->discardAll();
+        activeHost->setActive (true);
     }
+    else
+    {
+        mic = std::make_unique<MicCapture>();
+        const auto error = mic->start (settings.micName);
+
+        if (error.isNotEmpty())
+        {
+            mic.reset();
+            return error;
+        }
+
+        sampleRate = juce::roundToInt (mic->getSampleRate());
+
+        if (sampleRate <= 0)
+        {
+            mic.reset();
+            return "the input device reported no sample rate";
+        }
+
+        channels = 1;
+    }
+
+    // Оффсет и подстройка под часы относятся только к звуку DAW: микрофон идёт непрерывно
+    aligner = media::AudioAligner (sampleRate, fromHost ? settings.offsetMs : 0, fromHost);
+
+    auto abortStart = [this]
+    {
+        if (activeHost != nullptr)
+        {
+            activeHost->setActive (false);
+            activeHost = nullptr;
+        }
+
+        mic.reset();
+        avi.reset();
+        wav.reset();
+    };
 
     if (! openPart (1))
     {
-        mic.stop();
-        avi.reset();
-        wav.reset();
+        abortStart();
         return "could not create the file: " + file.getFullPathName();
     }
 
     if (! startThread())
     {
-        mic.stop();
-        finishFiles();
+        abortStart();
         return "could not start the recording thread";
     }
 
@@ -274,7 +339,12 @@ void AvRecorder::beginAudio()
 
 void AvRecorder::stop()
 {
-    mic.stop();
+    // Источник звука останавливаем первым: поток записи ещё успеет дочитать накопленное
+    if (mic != nullptr)
+        mic->stop();
+
+    if (activeHost != nullptr)
+        activeHost->setActive (false);
 
     if (isThreadRunning())
     {
@@ -284,6 +354,8 @@ void AvRecorder::stop()
     }
 
     finishFiles();
+    mic.reset();
+    activeHost = nullptr;
 }
 
 void AvRecorder::finishFiles()
@@ -346,67 +418,113 @@ bool AvRecorder::writeVideoFrame()
     return true;
 }
 
+bool AvRecorder::writePcm (const int16_t* data, int numFrames)
+{
+    const bool ok = (mode == Mode::aviWithAudio)
+                      ? (avi != nullptr && avi->writeAudio (data, (size_t) numFrames))
+                      : (wav != nullptr && wav->write (data, (size_t) numFrames));
+
+    if (! ok)
+        failed.store (true);
+    else
+        audioFramesWritten += numFrames;
+
+    return ok;
+}
+
+bool AvRecorder::writeSilence (int64_t numFrames)
+{
+    const int chunk = (int) (pcmBuffer.size() / (size_t) channels);
+    std::fill (pcmBuffer.begin(), pcmBuffer.end(), (int16_t) 0);
+
+    while (numFrames > 0)
+    {
+        const int n = (int) juce::jmin<int64_t> (numFrames, chunk);
+
+        if (! writePcm (pcmBuffer.data(), n))
+            return false;
+
+        numFrames -= n;
+    }
+
+    return true;
+}
+
 void AvRecorder::pumpAudio (bool flushAll)
 {
     const int minChunk = juce::jmax (1, sampleRate / 50); // не меньше 20 мс, чтобы не плодить мелкие куски
+    const int maxFrames = (int) (floatBuffer.size() / (size_t) channels);
 
     for (;;)
     {
-        const int available = mic.getNumAvailable();
+        const int available = audioAvailable();
 
         if (available <= 0 || (! flushAll && available < minChunk))
             break;
 
-        const int n = mic.read (floatBuffer.data(), juce::jmin (available, (int) floatBuffer.size()));
+        const int n = audioRead (floatBuffer.data(), juce::jmin (available, maxFrames));
 
         if (n <= 0)
             break;
 
-        for (int i = 0; i < n; ++i)
-            pcmBuffer[(size_t) i] = (int16_t) juce::jlimit (-32768, 32767,
-                                                             juce::roundToInt (floatBuffer[(size_t) i] * 32767.0f));
+        // Отрицательный оффсет: начало звука выбрасывается
+        const int drop = (int) aligner.takeFramesToDrop (n);
+        const int keep = n - drop;
 
-        const bool ok = (mode == Mode::aviWithAudio)
-                          ? (avi != nullptr && avi->writeAudio (pcmBuffer.data(), (size_t) n))
-                          : (wav != nullptr && wav->write (pcmBuffer.data(), (size_t) n));
+        if (keep <= 0)
+            continue;
 
-        if (! ok)
-        {
-            failed.store (true);
+        const float* src = floatBuffer.data() + (size_t) drop * (size_t) channels;
+        const int numSamples = keep * channels;
+
+        for (int i = 0; i < numSamples; ++i)
+            pcmBuffer[(size_t) i] = (int16_t) juce::jlimit (-32768, 32767, juce::roundToInt (src[i] * 32767.0f));
+
+        if (! writePcm (pcmBuffer.data(), keep))
             break;
-        }
     }
 }
 
 void AvRecorder::run()
 {
     const bool withVideo = (mode == Mode::aviWithAudio);
-    const double t0 = juce::Time::getMillisecondCounterHiRes();
-    int64_t framesWritten = 0;
 
     // Начало звука выравниваем с началом видео
     if (withVideo)
     {
-        mic.discardAll();
+        audioDiscard();
     }
     else
     {
-        // WAV: микрофон уже работает, но в файл звук пойдёт только после beginAudio(),
+        // WAV: источник звука уже работает, но в файл звук пойдёт только после beginAudio(),
         // а всё накопленное до этого момента выбрасывается
         while (! startRequested.load() && ! threadShouldExit())
         {
-            mic.discardAll();
+            audioDiscard();
             wait (2);
         }
     }
+
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
+    int64_t framesWritten = 0;
+
+    // Положительный оффсет: звук начинается позже видео, в начало добавляется тишина
+    writeSilence (aligner.getInitialSilenceFrames());
 
     while (! threadShouldExit() && ! failed.load())
     {
         pumpAudio (false);
 
+        const double elapsed = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+
+        // DAW остановлена и звук не присылает: добавляем тишину, чтобы звук не разошёлся с видео
+        const auto silence = aligner.getSilenceToInsert (elapsed, audioFramesWritten);
+
+        if (silence > 0)
+            writeSilence (silence);
+
         if (withVideo)
         {
-            const double elapsed = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
             const int64_t shouldHave = (int64_t) (elapsed * (double) kFps) + 1;
 
             if (shouldHave > framesWritten)

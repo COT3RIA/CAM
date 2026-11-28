@@ -18,7 +18,18 @@ namespace loc
         X (record,             "Record", "Запись") \
         X (stop,               "Stop", "Стоп") \
         X (openFolder,         "Open folder", "Папка") \
-        X (recordAudio,        "Record audio", "Писать звук") \
+        X (audioOff,           "Audio: off", "Звук: выкл") \
+        X (audioMic,           "Audio: microphone", "Звук: микрофон") \
+        X (audioHost,          "Audio: DAW master", "Звук: мастер DAW") \
+        X (syncTransport,      "Sync with DAW", "С транспортом DAW") \
+        X (projectHint,        "Project name (auto)", "Проект (авто)") \
+        X (offsetLabel,        "Audio delay:", "Сдвиг звука:") \
+        X (msUnit,             "ms", "мс") \
+        X (syncWaiting,        "Waiting for Play in the DAW...", "Жду Play в DAW...") \
+        X (hostNotReady,       "DAW audio is not available yet. Press Play once and try again.", \
+                               "Звук DAW пока недоступен. Один раз нажмите Play и повторите.") \
+        X (hostNoAudio,        "No audio from the DAW. Put CAM on the Master channel and start playback.", \
+                               "Звук от DAW не поступает. Поставьте CAM на мастер-канал и запустите воспроизведение.") \
         X (defaultMic,         "Default microphone", "Микрофон по умолчанию") \
         X (modeTogether,       "With video (AVI)", "Вместе с видео (AVI)") \
         X (modeSeparate,       "Separate file (WAV)", "Отдельным файлом (WAV)") \

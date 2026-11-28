@@ -10,7 +10,10 @@ WebcamAudioProcessor::WebcamAudioProcessor()
     language = juce::SystemStats::getUserLanguage().startsWithIgnoreCase ("ru") ? 1 : 0;
 }
 
-void WebcamAudioProcessor::prepareToPlay (double, int) {}
+void WebcamAudioProcessor::prepareToPlay (double sampleRate, int)
+{
+    hostCapture.setSampleRate (sampleRate);
+}
 void WebcamAudioProcessor::releaseResources() {}
 
 bool WebcamAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -26,6 +29,21 @@ bool WebcamAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 void WebcamAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // Транспорт DAW: идёт ли воспроизведение и какой темп
+    if (auto* transport = getPlayHead())
+    {
+        if (auto position = transport->getPosition())
+        {
+            hostPlaying.store (position->getIsPlaying());
+
+            if (auto bpm = position->getBpm())
+                hostBpm.store (*bpm);
+        }
+    }
+
+    // Копия входного звука для записи (работает только во время записи)
+    hostCapture.push (buffer);
 
     // Звук проходит насквозь без изменений. Лишние выходные каналы чистим.
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
@@ -44,9 +62,12 @@ void WebcamAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xml.setAttribute ("lens", lensIndex);
     xml.setAttribute ("mirror", mirror);
     xml.setAttribute ("lang", language);
-    xml.setAttribute ("recordAudio", recordAudio);
+    xml.setAttribute ("audioSource", audioSource);
     xml.setAttribute ("audioMode", audioMode);
     xml.setAttribute ("mic", micName);
+    xml.setAttribute ("offsetMs", audioOffsetMs);
+    xml.setAttribute ("sync", syncTransport);
+    xml.setAttribute ("project", projectName);
     copyXmlToBinary (xml, destData);
 }
 
@@ -62,9 +83,14 @@ void WebcamAudioProcessor::setStateInformation (const void* data, int sizeInByte
 
             // Старые проекты без этих полей оставляют значения по умолчанию
             language    = juce::jlimit (0, 1, xml->getIntAttribute ("lang", language));
-            recordAudio = xml->getBoolAttribute ("recordAudio", false);
+            // Раньше был флажок recordAudio (только микрофон): старые проекты читаем как "микрофон"
+            const int legacySource = xml->getBoolAttribute ("recordAudio", false) ? 1 : 0;
+            audioSource = juce::jlimit (0, 2, xml->getIntAttribute ("audioSource", legacySource));
             audioMode   = juce::jlimit (0, 1, xml->getIntAttribute ("audioMode", 0));
             micName     = xml->getStringAttribute ("mic");
+            audioOffsetMs = juce::jlimit (-2000, 2000, xml->getIntAttribute ("offsetMs", 0));
+            syncTransport = xml->getBoolAttribute ("sync", false);
+            projectName = xml->getStringAttribute ("project");
         }
     }
 }
