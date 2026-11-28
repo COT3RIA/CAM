@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "Looks.h"
 #include "Recorder.h"
 #include "Strings.h"
 #include <juce_video/juce_video.h>
@@ -55,6 +56,8 @@ private:
     void stopRecordingInternal();
     void refreshDisplay();
     void pollTransport();
+    juce::Image applyLook (const juce::Image& source);
+    void reapplyLook();
     void updateLevels();
     void showIndicatorsMenu();
     bool isMeterPillShown() const;
@@ -89,8 +92,8 @@ private:
     juce::StringArray cameraNames, micNames;
 
     OverlayPanel topBar;
-    juce::ComboBox cameraBox, lensBox, audioBox, micBox, modeBox;
-    juce::ToggleButton mirrorButton, syncButton;
+    juce::ComboBox cameraBox, lensBox, lookBox, audioBox, micBox, modeBox;
+    juce::ToggleButton mirrorButton, vignetteButton, grainButton, syncButton;
     juce::TextButton recordButton, folderButton, langButton, indicatorsButton;
     juce::Label offsetLabel;
     juce::Slider offsetSlider;
@@ -105,8 +108,10 @@ private:
     juce::Image latestFrame;
     bool newFrame = false;
 
-    juce::Image currentFrame;
-    juce::Image fisheyeImage;
+    juce::Image rawFrame;      // кадр камеры как есть
+    juce::Image currentFrame;  // после цветового фильтра: его видно в окне и пишет AVI
+    juce::uint32 lookFrameCounter = 0;
+    juce::Image lensImage;     // кадр после искажения/размытия (для "рыбьего глаза", подушки, тилт-шифта)
 
     bool gotFrame = false;
     bool noVideoWarned = false;

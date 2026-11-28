@@ -57,6 +57,7 @@ target_sources(WebcamVST PRIVATE
     Source/HostProject.h
     Source/FileNaming.h
     Source/AudioAligner.h
+    Source/Looks.h
 )
 
 target_compile_definitions(WebcamVST PUBLIC

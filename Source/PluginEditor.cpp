@@ -5,21 +5,34 @@
 namespace
 {
     // Веб-камера не умеет менять оптику, поэтому "объективы" эмулируются программно:
-    // зум = цифровой кроп центра кадра, Fisheye = бочкообразное искажение.
+    // зум = цифровой кроп центра кадра, остальное искажения, полосы или размытие.
+    // id хранится в проекте DAW: у старых объективов он не менялся (0..4), новые добавлены с 5.
+    enum class LensKind { plain, fisheye, pincushion, tiltShift };
+
     struct Lens
     {
+        int id;
         loc::Text name;
         float zoom;
-        bool fisheye;
+        LensKind kind;
+        bool letterbox;   // чёрные полосы под кинокадр 2.39:1
     };
 
+    // Порядок в списке: по возрастанию фокусного, затем эффекты
     const Lens kLenses[] =
     {
-        { loc::Text::lens13,      1.0f, false },
-        { loc::Text::lens24,      1.5f, false },
-        { loc::Text::lens48,      2.5f, false },
-        { loc::Text::lens77,      4.0f, false },
-        { loc::Text::lensFisheye, 1.0f, true  },
+        { 0,  loc::Text::lens13,         1.0f, LensKind::plain,      false },
+        { 1,  loc::Text::lens24,         1.5f, LensKind::plain,      false },
+        { 5,  loc::Text::lens35,         2.0f, LensKind::plain,      false },
+        { 2,  loc::Text::lens48,         2.5f, LensKind::plain,      false },
+        { 6,  loc::Text::lens50,         2.6f, LensKind::plain,      false },
+        { 3,  loc::Text::lens77,         4.0f, LensKind::plain,      false },
+        { 7,  loc::Text::lens85,         4.4f, LensKind::plain,      false },
+        { 8,  loc::Text::lens135,        6.5f, LensKind::plain,      false },
+        { 4,  loc::Text::lensFisheye,    1.0f, LensKind::fisheye,    false },
+        { 9,  loc::Text::lensPincushion, 1.0f, LensKind::pincushion, false },
+        { 10, loc::Text::lensCinema,     1.0f, LensKind::plain,      true  },
+        { 11, loc::Text::lensTiltShift,  1.0f, LensKind::tiltShift,  false },
     };
 
     constexpr int kNumLenses = (int) (sizeof (kLenses) / sizeof (kLenses[0]));
@@ -66,9 +79,13 @@ namespace
     const juce::Colour kControlLine (0x40ffffff);
     const juce::Colour kRecordingBg (0xa0d02020);
 
-    const Lens& getLens (int index)
+    const Lens& getLens (int id)
     {
-        return kLenses[juce::jlimit (0, kNumLenses - 1, index)];
+        for (const auto& lens : kLenses)
+            if (lens.id == id)
+                return lens;
+
+        return kLenses[1]; // неизвестный id (например, из будущей версии): 24 мм
     }
 
     juce::File getRecordingsFolder()
@@ -77,8 +94,8 @@ namespace
                    .getChildFile ("CAM");
     }
 
-    // Программный fisheye с билинейной интерполяцией
-    juce::Image makeFisheye (const juce::Image& source)
+    // Программное искажение с билинейной интерполяцией: "рыбий глаз" (бочка) или подушка
+    juce::Image makeWarp (const juce::Image& source, bool pincushion)
     {
         const int sw = source.getWidth();
         const int sh = source.getHeight();
@@ -109,7 +126,8 @@ namespace
             {
                 const float u = (((float) ox + 0.5f) / (float) ow) * 2.0f - 1.0f;
                 const float r2 = u * u + v * v;
-                const float f = (1.0f + k * r2) / (1.0f + k);
+                const float f = pincushion ? 1.0f - 0.16f * r2            // края растянуты: подушка
+                                           : (1.0f + k * r2) / (1.0f + k); // края сжаты: бочка
                 const float su = u * f;
                 const float sv = v * f;
 
@@ -151,6 +169,56 @@ namespace
 
         return out;
     }
+
+    // Тилт-шифт: резкая полоса по центру, верх и низ размыты (эффект миниатюры)
+    juce::Image makeTiltShift (const juce::Image& source)
+    {
+        const int sw = source.getWidth();
+        const int sh = source.getHeight();
+
+        if (sw < 2 || sh < 2)
+            return {};
+
+        const float scale = juce::jmin (1.0f, 640.0f / (float) sw);
+        const int ow = juce::jmax (8, (int) ((float) sw * scale));
+        const int oh = juce::jmax (8, (int) ((float) sh * scale));
+
+        juce::Image sharp = source.convertedToFormat (juce::Image::ARGB)
+                                  .rescaled (ow, oh, juce::Graphics::mediumResamplingQuality);
+
+        // Размытие: сильное уменьшение и обратное увеличение с интерполяцией
+        juce::Image blurred = sharp.rescaled (juce::jmax (2, ow / 8), juce::jmax (2, oh / 8), juce::Graphics::highResamplingQuality)
+                                   .rescaled (ow, oh, juce::Graphics::highResamplingQuality);
+
+        juce::Image out = sharp.createCopy();
+
+        juce::Image::BitmapData dst (out, juce::Image::BitmapData::readWrite);
+        juce::Image::BitmapData blr (blurred, juce::Image::BitmapData::readOnly);
+
+        for (int y = 0; y < oh; ++y)
+        {
+            const float v = std::abs ((((float) y + 0.5f) / (float) oh) * 2.0f - 1.0f);
+            const float t = juce::jlimit (0.0f, 1.0f, (v - 0.22f) / 0.5f);
+            const float w = t * t * (3.0f - 2.0f * t);          // 0 в центре, 1 у краёв
+            const int wi = (int) (w * 256.0f);
+
+            if (wi == 0)
+                continue;
+
+            auto* d = reinterpret_cast<juce::PixelARGB*> (dst.getLinePointer (y));
+            const auto* b = reinterpret_cast<const juce::PixelARGB*> (blr.getLinePointer (y));
+
+            for (int x = 0; x < ow; ++x)
+            {
+                auto mix = [wi] (int a, int c) { return (juce::uint8) (a + (((c - a) * wi) >> 8)); };
+                d[x].setARGB (255, mix (d[x].getRed(),   b[x].getRed()),
+                                   mix (d[x].getGreen(), b[x].getGreen()),
+                                   mix (d[x].getBlue(),  b[x].getBlue()));
+            }
+        }
+
+        return out;
+    }
 }
 
 //==============================================================================
@@ -161,6 +229,9 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     topBar.addAndMakeVisible (cameraBox);
     topBar.addAndMakeVisible (lensBox);
     topBar.addAndMakeVisible (mirrorButton);
+    topBar.addAndMakeVisible (lookBox);
+    topBar.addAndMakeVisible (vignetteButton);
+    topBar.addAndMakeVisible (grainButton);
     topBar.addAndMakeVisible (recordButton);
     topBar.addAndMakeVisible (folderButton);
     topBar.addAndMakeVisible (audioBox);
@@ -203,6 +274,8 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     micNames = MicCapture::getInputDeviceNames();
 
     mirrorButton.setToggleState (proc.mirror, juce::dontSendNotification);
+    vignetteButton.setToggleState (proc.vignette, juce::dontSendNotification);
+    grainButton.setToggleState (proc.grain, juce::dontSendNotification);
     syncButton.setToggleState (proc.syncTransport, juce::dontSendNotification);
     prevHostPlaying = proc.hostPlaying.load();
     lastHostBlocks = proc.hostBlocks.load();
@@ -220,8 +293,26 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
 
     lensBox.onChange = [this]
     {
-        proc.lensIndex = lensBox.getSelectedItemIndex();
+        proc.lensIndex = lensBox.getSelectedId() - 1; // id объектива, не позиция в списке
         refreshDisplay();
+    };
+
+    lookBox.onChange = [this]
+    {
+        proc.lookIndex = juce::jlimit (0, 6, lookBox.getSelectedItemIndex());
+        reapplyLook();
+    };
+
+    vignetteButton.onClick = [this]
+    {
+        proc.vignette = vignetteButton.getToggleState();
+        reapplyLook();
+    };
+
+    grainButton.onClick = [this]
+    {
+        proc.grain = grainButton.getToggleState();
+        reapplyLook();
     };
 
     mirrorButton.onClick = [this]
@@ -307,7 +398,7 @@ WebcamAudioProcessorEditor::~WebcamAudioProcessorEditor()
 //==============================================================================
 void WebcamAudioProcessorEditor::styleControls()
 {
-    for (auto* box : { &cameraBox, &lensBox, &audioBox, &micBox, &modeBox })
+    for (auto* box : { &cameraBox, &lensBox, &lookBox, &audioBox, &micBox, &modeBox })
     {
         box->setColour (juce::ComboBox::backgroundColourId, kControlBg);
         box->setColour (juce::ComboBox::outlineColourId, kControlLine);
@@ -323,7 +414,7 @@ void WebcamAudioProcessorEditor::styleControls()
         button->setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     }
 
-    for (auto* toggle : { &mirrorButton, &syncButton })
+    for (auto* toggle : { &mirrorButton, &vignetteButton, &grainButton, &syncButton })
     {
         toggle->setColour (juce::ToggleButton::textColourId, juce::Colours::white);
         toggle->setColour (juce::ToggleButton::tickColourId, juce::Colours::white);
@@ -366,6 +457,19 @@ void WebcamAudioProcessorEditor::populateMicBox()
 void WebcamAudioProcessorEditor::applyLanguage()
 {
     mirrorButton.setButtonText (tr (loc::Text::mirror));
+    vignetteButton.setButtonText (tr (loc::Text::vignette));
+    grainButton.setButtonText (tr (loc::Text::grain));
+
+    lookBox.clear (juce::dontSendNotification);
+    {
+        const loc::Text lookNames[] = { loc::Text::lookNone, loc::Text::lookBw, loc::Text::lookSepia, loc::Text::lookWarm,
+                                        loc::Text::lookCool, loc::Text::lookContrast, loc::Text::lookVhs };
+
+        for (int i = 0; i < 7; ++i)
+            lookBox.addItem (tr (lookNames[i]), i + 1);
+
+        lookBox.setSelectedItemIndex (juce::jlimit (0, 6, proc.lookIndex), juce::dontSendNotification);
+    }
     syncButton.setButtonText (tr (loc::Text::syncTransport));
     indicatorsButton.setButtonText (tr (loc::Text::indicators));
     offsetLabel.setText (tr (loc::Text::offsetLabel), juce::dontSendNotification);
@@ -384,9 +488,9 @@ void WebcamAudioProcessorEditor::applyLanguage()
     lensBox.clear (juce::dontSendNotification);
 
     for (int i = 0; i < kNumLenses; ++i)
-        lensBox.addItem (tr (kLenses[i].name), i + 1);
+        lensBox.addItem (tr (kLenses[i].name), kLenses[i].id + 1);
 
-    lensBox.setSelectedItemIndex (juce::jlimit (0, kNumLenses - 1, proc.lensIndex), juce::dontSendNotification);
+    lensBox.setSelectedId (getLens (proc.lensIndex).id + 1, juce::dontSendNotification);
 
     modeBox.clear (juce::dontSendNotification);
     modeBox.addItem (tr (loc::Text::modeTogether), 1);
@@ -450,7 +554,7 @@ void WebcamAudioProcessorEditor::updateOverlay()
 
     const bool hovered = isMouseOver (true)
                           || cameraBox.isPopupActive() || lensBox.isPopupActive()
-                          || micBox.isPopupActive() || modeBox.isPopupActive() || audioBox.isPopupActive()
+                          || micBox.isPopupActive() || modeBox.isPopupActive() || audioBox.isPopupActive() || lookBox.isPopupActive()
                           || projectEdit.hasKeyboardFocus (true) || indicatorsMenuOpen;
 
     if (hovered)
@@ -586,8 +690,9 @@ void WebcamAudioProcessorEditor::closeCamera()
         newFrame = false;
     }
 
+    rawFrame = juce::Image();
     currentFrame = juce::Image();
-    fisheyeImage = juce::Image();
+    lensImage = juce::Image();
     repaint();
 }
 
@@ -646,10 +751,11 @@ void WebcamAudioProcessorEditor::timerCallback()
             adaptToVideoAspect (frame.getWidth(), frame.getHeight());
         }
 
-        currentFrame = frame;
+        rawFrame = frame;
+        currentFrame = applyLook (frame);
 
         if (recordKind == RecordKind::avi && avRecorder != nullptr)
-            avRecorder->pushFrame (frame);
+            avRecorder->pushFrame (currentFrame);
 
         refreshDisplay();
     }
@@ -667,10 +773,58 @@ void WebcamAudioProcessorEditor::timerCallback()
     }
 }
 
+// Цветовой фильтр, виньетка, зерно. Результат виден в окне и попадает в AVI-запись
+// (запись камеры в WMV/MOV идёт мимо плагина и фильтров не получает).
+juce::Image WebcamAudioProcessorEditor::applyLook (const juce::Image& source)
+{
+    const auto look = (looks::Look) juce::jlimit (0, 6, proc.lookIndex);
+
+    if (! source.isValid() || (look == looks::Look::none && ! proc.vignette && ! proc.grain))
+        return source;
+
+    juce::Image out = source.convertedToFormat (juce::Image::ARGB);
+
+    if (out.getPixelData().get() == source.getPixelData().get())
+        out = source.createCopy(); // формат уже ARGB: не портим исходный кадр
+
+    {
+        juce::Image::BitmapData data (out, juce::Image::BitmapData::readWrite);
+
+       #if JUCE_LITTLE_ENDIAN
+        const looks::ChannelOffsets offsets { 2, 1, 0 };   // в памяти B G R A
+       #else
+        const looks::ChannelOffsets offsets { 1, 2, 3 };   // в памяти A R G B
+       #endif
+
+        looks::process (data.data, data.width, data.height, data.lineStride, data.pixelStride,
+                        offsets, look, proc.vignette, proc.grain, ++lookFrameCounter);
+    }
+
+    return out;
+}
+
+// Фильтр поменяли: пересчитываем последний кадр, чтобы эффект был виден сразу, а не со следующим кадром камеры
+void WebcamAudioProcessorEditor::reapplyLook()
+{
+    if (rawFrame.isValid())
+    {
+        currentFrame = applyLook (rawFrame);
+        refreshDisplay();
+    }
+}
+
 void WebcamAudioProcessorEditor::refreshDisplay()
 {
-    if (getLens (proc.lensIndex).fisheye && currentFrame.isValid())
-        fisheyeImage = makeFisheye (currentFrame);
+    if (currentFrame.isValid())
+    {
+        switch (getLens (proc.lensIndex).kind)
+        {
+            case LensKind::fisheye:    lensImage = makeWarp (currentFrame, false); break;
+            case LensKind::pincushion: lensImage = makeWarp (currentFrame, true);  break;
+            case LensKind::tiltShift:  lensImage = makeTiltShift (currentFrame);   break;
+            case LensKind::plain:      break;
+        }
+    }
 
     repaint();
 }
@@ -1117,7 +1271,7 @@ void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
         return;
 
     const auto& lens = getLens (proc.lensIndex);
-    const juce::Image& img = lens.fisheye ? fisheyeImage : currentFrame;
+    const juce::Image& img = lens.kind == LensKind::plain ? currentFrame : lensImage;
     const bool haveVideo = img.isValid();
     const auto statusText = getStatusText();
 
@@ -1134,7 +1288,7 @@ void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState state (g);
 
         // Кадр заполняет окно целиком: лишнее по краям обрезается (режим "cover")
-        const float zoom = lens.fisheye ? 1.0f : lens.zoom;
+        const float zoom = lens.zoom;
         const int imgW = img.getWidth();
         const int imgH = img.getHeight();
 
@@ -1157,6 +1311,19 @@ void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
 
         g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
         g.drawImage (img, 0, 0, W, H, cx, cy, cw, ch);
+    }
+
+    // Кинокадр 2.39:1: чёрные полосы сверху и снизу (только в окне)
+    if (haveVideo && lens.letterbox)
+    {
+        const int bar = (H - juce::roundToInt ((double) W / 2.39)) / 2;
+
+        if (bar > 0)
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (0, 0, W, bar);
+            g.fillRect (0, H - bar, W, bar);
+        }
     }
 
     // Строка статуса: только при наведении курсора, плавно появляется поверх видео
@@ -1213,6 +1380,9 @@ void WebcamAudioProcessorEditor::resized()
     items.push_back ({ &cameraBox,    flexibleMin, true  });
     items.push_back ({ &lensBox,      150,         false });
     items.push_back ({ &mirrorButton, 96,          false });
+    items.push_back ({ &lookBox,      130,         false });
+    items.push_back ({ &vignetteButton, 96,        false });
+    items.push_back ({ &grainButton,  80,          false });
     items.push_back ({ &recordButton, 90,          false });
     items.push_back ({ &folderButton, 100,         false });
     items.push_back ({ &audioBox,     170,         false });

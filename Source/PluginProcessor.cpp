@@ -78,6 +78,9 @@ void WebcamAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xml.setAttribute ("camera", cameraName);
     xml.setAttribute ("lens", lensIndex);
     xml.setAttribute ("mirror", mirror);
+    xml.setAttribute ("look", lookIndex);
+    xml.setAttribute ("vignette", vignette);
+    xml.setAttribute ("grain", grain);
     xml.setAttribute ("lang", language);
     xml.setAttribute ("audioSource", audioSource);
     xml.setAttribute ("audioMode", audioMode);
@@ -96,8 +99,11 @@ void WebcamAudioProcessor::setStateInformation (const void* data, int sizeInByte
         if (xml->hasTagName ("WebcamViewerState"))
         {
             cameraName  = xml->getStringAttribute ("camera");
-            lensIndex   = xml->getIntAttribute ("lens", 1);
+            lensIndex   = juce::jlimit (0, 99, xml->getIntAttribute ("lens", 1));
             mirror      = xml->getBoolAttribute ("mirror", false);
+            lookIndex   = juce::jlimit (0, 6, xml->getIntAttribute ("look", 0));
+            vignette    = xml->getBoolAttribute ("vignette", false);
+            grain       = xml->getBoolAttribute ("grain", false);
 
             // Старые проекты без этих полей оставляют значения по умолчанию
             language    = juce::jlimit (0, 1, xml->getIntAttribute ("lang", language));

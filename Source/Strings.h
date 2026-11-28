@@ -11,6 +11,13 @@ namespace loc
         X (none,               "", "") \
         X (lens13,             "13mm (full frame)", "13 мм (весь кадр)") \
         X (lens24,             "24mm", "24 мм") \
+        X (lens35,             "35mm", "35 мм") \
+        X (lens50,             "50mm", "50 мм") \
+        X (lens85,             "85mm", "85 мм") \
+        X (lens135,            "135mm", "135 мм") \
+        X (lensPincushion,     "Pincushion", "Подушка") \
+        X (lensCinema,         "Cinema 2.39:1", "Кино 2.39:1") \
+        X (lensTiltShift,      "Tilt-shift", "Тилт-шифт") \
         X (lens48,             "48mm", "48 мм") \
         X (lens77,             "77mm", "77 мм") \
         X (lensFisheye,        "Fisheye", "Рыбий глаз") \
@@ -21,6 +28,15 @@ namespace loc
         X (audioOff,           "Audio: off", "Звук: выкл") \
         X (audioMic,           "Audio: microphone", "Звук: микрофон") \
         X (audioHost,          "Audio: DAW master", "Звук: мастер DAW") \
+        X (lookNone,           "No filter", "Без фильтра") \
+        X (lookBw,             "Black & white", "Чёрно-белое") \
+        X (lookSepia,          "Sepia", "Сепия") \
+        X (lookWarm,           "Warm", "Тёплый тон") \
+        X (lookCool,           "Cool", "Холодный тон") \
+        X (lookContrast,       "High contrast", "Контраст") \
+        X (lookVhs,            "VHS", "VHS") \
+        X (vignette,           "Vignette", "Виньетка") \
+        X (grain,              "Grain", "Зерно") \
         X (indicators,         "Indicators", "Индикаторы") \
         X (fxMeterPill,        "Meter with label (DAW / mic)", "Метр с подписью (DAW / микрофон)") \
         X (fxMiniMeter,        "Mini meter at REC", "Мини-метр у REC") \

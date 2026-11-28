@@ -41,6 +41,9 @@ public:
     juce::String cameraName;
     int lensIndex = 1;
     bool mirror = false;
+    int lookIndex = 0;         // цветовой фильтр (см. looks::Look)
+    bool vignette = false;
+    bool grain = false;
 
     int language = 0;          // 0 = English, 1 = Русский (при первом запуске берётся язык системы)
     int audioSource = 0;       // 0 = без звука, 1 = микрофон, 2 = мастер-шина DAW
