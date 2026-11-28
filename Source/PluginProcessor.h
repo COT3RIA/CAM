@@ -54,6 +54,13 @@ public:
     std::atomic<bool> hostPlaying { false };
     std::atomic<double> hostBpm { 0.0 };
 
+    // Какие индикаторы звука включены (битовая маска, см. PluginEditor.cpp); 0 = все выключены
+    int indicatorFlags = 1;
+
+    // Пики входного звука DAW с момента последнего чтения окном и счётчик обработанных блоков
+    std::atomic<float> hostPeakL { 0.0f }, hostPeakR { 0.0f };
+    std::atomic<int64_t> hostBlocks { 0 };
+
     // Звук, пришедший от DAW на вход плагина
     HostAudioCapture hostCapture;
 

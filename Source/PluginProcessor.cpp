@@ -42,6 +42,23 @@ void WebcamAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
+    // Уровень входного звука для индикаторов (всегда, не только при записи)
+    {
+        const int n = buffer.getNumSamples();
+        const int chs = juce::jmin (2, buffer.getNumChannels());
+
+        if (n > 0 && chs > 0)
+        {
+            const float pl = buffer.getMagnitude (0, 0, n);
+            const float pr = chs > 1 ? buffer.getMagnitude (1, 0, n) : pl;
+
+            if (pl > hostPeakL.load (std::memory_order_relaxed)) hostPeakL.store (pl, std::memory_order_relaxed);
+            if (pr > hostPeakR.load (std::memory_order_relaxed)) hostPeakR.store (pr, std::memory_order_relaxed);
+
+            hostBlocks.fetch_add (1, std::memory_order_relaxed);
+        }
+    }
+
     // Копия входного звука для записи (работает только во время записи)
     hostCapture.push (buffer);
 
@@ -68,6 +85,7 @@ void WebcamAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     xml.setAttribute ("offsetMs", audioOffsetMs);
     xml.setAttribute ("sync", syncTransport);
     xml.setAttribute ("project", projectName);
+    xml.setAttribute ("indicators", indicatorFlags);
     copyXmlToBinary (xml, destData);
 }
 
@@ -91,6 +109,7 @@ void WebcamAudioProcessor::setStateInformation (const void* data, int sizeInByte
             audioOffsetMs = juce::jlimit (-2000, 2000, xml->getIntAttribute ("offsetMs", 0));
             syncTransport = xml->getBoolAttribute ("sync", false);
             projectName = xml->getStringAttribute ("project");
+            indicatorFlags = juce::jlimit (0, 31, xml->getIntAttribute ("indicators", 1));
         }
     }
 }

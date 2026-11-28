@@ -34,6 +34,9 @@ public:
     int read (float* dest, int maxSamples);
     void discardAll();
 
+    // Пик (0..1) с момента прошлого вызова; для индикатора уровня
+    float takePeak() noexcept { return peak.exchange (0.0f); }
+
 private:
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData, int numInputChannels,
                                            float* const* outputChannelData, int numOutputChannels,
@@ -46,6 +49,7 @@ private:
     juce::AbstractFifo fifo { 48000 * 4 };
     std::vector<float> buffer;
     std::atomic<double> sampleRate { 0.0 };
+    std::atomic<float> peak { 0.0f };
     bool running = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MicCapture)
@@ -92,6 +96,9 @@ public:
 
     bool isRunning() const    { return isThreadRunning(); }
     bool hasFailed() const noexcept { return failed.load(); }
+
+    // Уровень микрофона для индикатора (0, если источник не микрофон)
+    float takeMicPeak() { return mic != nullptr ? mic->takePeak() : 0.0f; }
 
 private:
     void run() override;

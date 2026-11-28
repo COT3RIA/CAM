@@ -29,6 +29,39 @@ namespace
     constexpr int kMinW = 480, kMinH = 270, kMaxW = 1920, kMaxH = 1080;
     constexpr int kStartW = 640, kStartH = 360;
 
+    // Индикаторы звука (биты в proc.indicatorFlags)
+    constexpr int kFxMeterPill = 1, kFxMiniMeter = 2, kFxStatusDot = 4, kFxWave = 8, kFxPulse = 16;
+    constexpr int kFxAll = kFxMeterPill | kFxMiniMeter | kFxStatusDot | kFxWave | kFxPulse;
+    constexpr int kMeterPillWidth = 136, kMeterPillHeight = 26;
+
+    // Уровень по шкале дБ: -48 дБ и тише = 0, 0 дБ = 1
+    float levelFromPeak (float peak)
+    {
+        if (peak <= 0.0f)
+            return 0.0f;
+
+        return juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak) + 48.0f) / 48.0f);
+    }
+
+    juce::Colour meterColour (float level, bool clipped)
+    {
+        if (clipped)       return juce::Colour (0xffe5484d);
+        if (level > 0.85f) return juce::Colour (0xfff0b429);
+        return juce::Colour (0xff2fbf71);
+    }
+
+    void drawLevelBar (juce::Graphics& g, juce::Rectangle<float> r, float level, bool clipped, float alpha)
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.18f * alpha));
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+
+        if (level > 0.003f)
+        {
+            g.setColour (meterColour (level, clipped).withAlpha (alpha));
+            g.fillRoundedRectangle (r.withWidth (juce::jmax (r.getHeight(), r.getWidth() * level)), r.getHeight() * 0.5f);
+        }
+    }
+
     const juce::Colour kControlBg   (0x66000000);
     const juce::Colour kControlLine (0x40ffffff);
     const juce::Colour kRecordingBg (0xa0d02020);
@@ -137,6 +170,7 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     topBar.addAndMakeVisible (offsetSlider);
     topBar.addAndMakeVisible (syncButton);
     topBar.addAndMakeVisible (projectEdit);
+    topBar.addAndMakeVisible (indicatorsButton);
     topBar.addAndMakeVisible (langButton);
 
     offsetSlider.setSliderStyle (juce::Slider::IncDecButtons);
@@ -171,6 +205,8 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     mirrorButton.setToggleState (proc.mirror, juce::dontSendNotification);
     syncButton.setToggleState (proc.syncTransport, juce::dontSendNotification);
     prevHostPlaying = proc.hostPlaying.load();
+    lastHostBlocks = proc.hostBlocks.load();
+    lastHostBlockMs = juce::Time::getMillisecondCounter();
 
     populateMicBox();
     applyLanguage();       // заполняет объективы и режимы и расставляет надписи
@@ -237,6 +273,7 @@ WebcamAudioProcessorEditor::WebcamAudioProcessorEditor (WebcamAudioProcessor& p)
     };
 
     recordButton.onClick = [this] { toggleRecording(); };
+    indicatorsButton.onClick = [this] { showIndicatorsMenu(); };
 
     folderButton.onClick = []
     {
@@ -278,7 +315,7 @@ void WebcamAudioProcessorEditor::styleControls()
         box->setColour (juce::ComboBox::arrowColourId, juce::Colours::white);
     }
 
-    for (auto* button : { &recordButton, &folderButton, &langButton })
+    for (auto* button : { &recordButton, &folderButton, &indicatorsButton, &langButton })
     {
         button->setColour (juce::TextButton::buttonColourId, kControlBg);
         button->setColour (juce::TextButton::buttonOnColourId, kControlBg);
@@ -330,6 +367,7 @@ void WebcamAudioProcessorEditor::applyLanguage()
 {
     mirrorButton.setButtonText (tr (loc::Text::mirror));
     syncButton.setButtonText (tr (loc::Text::syncTransport));
+    indicatorsButton.setButtonText (tr (loc::Text::indicators));
     offsetLabel.setText (tr (loc::Text::offsetLabel), juce::dontSendNotification);
     offsetSlider.setTextValueSuffix (" " + tr (loc::Text::msUnit));
     projectEdit.setTextToShowWhenEmpty (tr (loc::Text::projectHint), juce::Colour (0x99ffffff));
@@ -413,7 +451,7 @@ void WebcamAudioProcessorEditor::updateOverlay()
     const bool hovered = isMouseOver (true)
                           || cameraBox.isPopupActive() || lensBox.isPopupActive()
                           || micBox.isPopupActive() || modeBox.isPopupActive() || audioBox.isPopupActive()
-                          || projectEdit.hasKeyboardFocus (true);
+                          || projectEdit.hasKeyboardFocus (true) || indicatorsMenuOpen;
 
     if (hovered)
         showUntilMs = now + 500;
@@ -456,13 +494,27 @@ void WebcamAudioProcessorEditor::adaptToVideoAspect (int videoWidth, int videoHe
 
 juce::Rectangle<int> WebcamAudioProcessorEditor::getStatusBounds() const
 {
-    const int reserved = recording ? 112 : 0;
-    return { 8, getHeight() - 8 - 26, juce::jmax (0, getWidth() - 16 - reserved), 26 };
+    // Строка статуса лежит между метром слева и плашкой REC справа
+    const int left = isMeterPillShown() ? 8 + kMeterPillWidth + 6 : 8;
+    const int right = recording ? getRecBounds().getWidth() + 8 + 6 : 8;
+    return { left, getHeight() - 8 - 26, juce::jmax (0, getWidth() - left - right), 26 };
 }
 
 juce::Rectangle<int> WebcamAudioProcessorEditor::getRecBounds() const
 {
-    return { getWidth() - 8 - 100, getHeight() - 8 - 26, 100, 26 };
+    const int fx = proc.indicatorFlags;
+    const int width = 100 + ((fx & kFxStatusDot) != 0 ? 16 : 0) + ((fx & kFxMiniMeter) != 0 ? 62 : 0);
+    return { getWidth() - 8 - width, getHeight() - 8 - 26, width, 26 };
+}
+
+bool WebcamAudioProcessorEditor::isMeterPillShown() const
+{
+    return (proc.indicatorFlags & kFxMeterPill) != 0 && proc.audioSource != 0;
+}
+
+juce::Rectangle<int> WebcamAudioProcessorEditor::getMeterPillBounds() const
+{
+    return { 8, getHeight() - 8 - kMeterPillHeight, kMeterPillWidth, kMeterPillHeight };
 }
 
 //==============================================================================
@@ -553,6 +605,7 @@ void WebcamAudioProcessorEditor::timerCallback()
 {
     updateOverlay();
     pollTransport();
+    updateLevels();
 
     // Звук DAW не приходит: плагин не на мастер-канале или хост не вызывает обработку
     if (recording && ! hostWarned && recordKind != RecordKind::nativeVideo
@@ -832,6 +885,227 @@ void WebcamAudioProcessorEditor::stopRecordingInternal()
 }
 
 //==============================================================================
+// Индикаторы звука
+void WebcamAudioProcessorEditor::updateLevels()
+{
+    const auto now = juce::Time::getMillisecondCounter();
+    const int source = proc.audioSource;
+
+    // Звук DAW идёт, пока хост присылает блоки (в паузе DAW блоки тоже приходят, но с тишиной)
+    const auto blocks = proc.hostBlocks.load();
+
+    if (blocks != lastHostBlocks)
+    {
+        lastHostBlocks = blocks;
+        lastHostBlockMs = now;
+    }
+
+    float peakL = 0.0f, peakR = 0.0f;
+
+    if (source == 2)
+    {
+        peakL = proc.hostPeakL.exchange (0.0f);
+        peakR = proc.hostPeakR.exchange (0.0f);
+        audioState = (now - lastHostBlockMs < 1000) ? AudioState::ok : AudioState::noSignal;
+    }
+    else if (source == 1)
+    {
+        // Микрофон открывается только на время записи, вне записи уровня нет
+        if (recording && avRecorder != nullptr)
+        {
+            peakL = peakR = avRecorder->takeMicPeak();
+            audioState = AudioState::ok;
+        }
+        else
+        {
+            audioState = AudioState::idle;
+        }
+    }
+    else
+    {
+        audioState = AudioState::off;
+    }
+
+    auto update = [] (float& level, int& hold, float peak)
+    {
+        const float target = levelFromPeak (peak);
+        level = juce::jmax (target, level * 0.88f);
+
+        if (peak >= 0.99f)
+            hold = 20;
+        else if (hold > 0)
+            --hold;
+    };
+
+    update (levelL, clipHoldL, peakL);
+    update (levelR, clipHoldR, peakR);
+
+    waveHistory[(size_t) waveHead] = (levelL + levelR) * 0.5f;
+    waveHead = (waveHead + 1) % (int) waveHistory.size();
+
+    // Перерисовываем только нижнюю полосу окна, где живут индикаторы
+    if (proc.indicatorFlags != 0 && source != 0 && gotFrame)
+        repaint (0, getHeight() - 64, getWidth(), 64);
+}
+
+void WebcamAudioProcessorEditor::showIndicatorsMenu()
+{
+    struct Entry { int bit; loc::Text text; };
+    const Entry entries[] =
+    {
+        { kFxMeterPill, loc::Text::fxMeterPill }, { kFxMiniMeter, loc::Text::fxMiniMeter },
+        { kFxStatusDot, loc::Text::fxStatusDot }, { kFxWave,      loc::Text::fxWave },
+        { kFxPulse,     loc::Text::fxPulse }
+    };
+
+    juce::PopupMenu menu;
+    int id = 1;
+
+    for (const auto& entry : entries)
+        menu.addItem (id++, tr (entry.text), true, (proc.indicatorFlags & entry.bit) != 0);
+
+    menu.addSeparator();
+    menu.addItem (100, tr (loc::Text::fxAll), true, proc.indicatorFlags == kFxAll);
+    menu.addItem (101, tr (loc::Text::fxNone), true, proc.indicatorFlags == 0);
+
+    indicatorsMenuOpen = true;
+
+    juce::Component::SafePointer<WebcamAudioProcessorEditor> safe (this);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&indicatorsButton),
+                        [safe] (int result)
+    {
+        if (safe == nullptr)
+            return;
+
+        safe->indicatorsMenuOpen = false;
+        auto& fxFlags = safe->proc.indicatorFlags;
+
+        if (result >= 1 && result <= 5)
+            fxFlags ^= (1 << (result - 1));
+        else if (result == 100)
+            fxFlags = kFxAll;
+        else if (result == 101)
+            fxFlags = 0;
+
+        safe->resized(); // ширина плашки REC и строки статуса зависит от набора индикаторов
+        safe->repaint();
+    });
+}
+
+// Подпись по источнику звука: треугольник Play и "DAW" либо микрофон и "MIC"
+void WebcamAudioProcessorEditor::drawMeterPill (juce::Graphics& g, float alpha) const
+{
+    const auto b = getMeterPillBounds().toFloat();
+    const bool warn = (audioState == AudioState::noSignal);
+    const bool dim = (audioState == AudioState::idle);
+    const float contentAlpha = alpha * (dim ? 0.6f : 1.0f);
+
+    g.setColour (juce::Colours::black.withAlpha (0.55f * alpha));
+    g.fillRoundedRectangle (b, 8.0f);
+
+    const auto fg = (warn ? juce::Colour (0xffffb4b4) : juce::Colours::white).withAlpha (contentAlpha);
+    g.setColour (fg);
+
+    const float cx = b.getX() + 17.0f, cy = b.getCentreY();
+
+    if (proc.audioSource == 2)
+    {
+        juce::Path play;
+        play.addTriangle (cx - 4.0f, cy - 5.5f, cx - 4.0f, cy + 5.5f, cx + 5.0f, cy);
+        g.fillPath (play);
+    }
+    else
+    {
+        g.fillRoundedRectangle (cx - 2.5f, cy - 6.0f, 5.0f, 8.5f, 2.5f);
+        g.drawLine (cx - 4.5f, cy + 1.0f, cx - 4.5f, cy + 2.0f, 1.2f);
+        g.drawLine (cx + 4.5f, cy + 1.0f, cx + 4.5f, cy + 2.0f, 1.2f);
+        g.drawLine (cx - 4.5f, cy + 2.0f, cx + 4.5f, cy + 2.0f, 1.2f);
+        g.drawLine (cx, cy + 2.5f, cx, cy + 6.0f, 1.2f);
+        g.drawLine (cx - 3.0f, cy + 6.0f, cx + 3.0f, cy + 6.0f, 1.2f);
+    }
+
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.drawText (proc.audioSource == 2 ? "DAW" : "MIC",
+                juce::Rectangle<float> (b.getX() + 30.0f, b.getY(), 36.0f, b.getHeight()),
+                juce::Justification::centredLeft, false);
+
+    const float mx = b.getX() + 68.0f, mw = 58.0f, mh = 5.0f;
+    drawLevelBar (g, { mx, cy - 7.0f, mw, mh }, levelL, clipHoldL > 0, contentAlpha);
+    drawLevelBar (g, { mx, cy + 2.0f, mw, mh }, levelR, clipHoldR > 0, contentAlpha);
+}
+
+void WebcamAudioProcessorEditor::drawWave (juce::Graphics& g, float alpha) const
+{
+    const float w = (float) getWidth();
+    const float centreY = (float) getHeight() - 32.0f;
+    const int n = (int) waveHistory.size();
+    const float barW = w / (float) n;
+
+    g.setColour (juce::Colours::white.withAlpha (0.35f * alpha));
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float level = waveHistory[(size_t) ((waveHead + i) % n)];
+        const float half = juce::jmax (0.5f, level * 22.0f);
+        g.fillRect (i * barW, centreY - half, juce::jmax (1.0f, barW - 1.0f), half * 2.0f);
+    }
+}
+
+// Плашка записи: [точка состояния] [мини-метр] [красная точка] REC мм:сс
+void WebcamAudioProcessorEditor::drawRecPill (juce::Graphics& g) const
+{
+    const int fx = proc.indicatorFlags;
+    const auto rec = getRecBounds();
+    const auto secs = (int) ((juce::Time::getMillisecondCounter() - recordStartMs) / 1000);
+    const float cy = (float) rec.getCentreY();
+
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.fillRoundedRectangle (rec.toFloat(), 8.0f);
+
+    float x = (float) rec.getX() + 10.0f;
+
+    if ((fx & kFxStatusDot) != 0)
+    {
+        juce::Colour c (0xff8b919b);
+
+        if (audioState == AudioState::ok)
+            c = juce::Colour (0xff2fbf71);
+        else if (audioState == AudioState::noSignal)
+            c = ((juce::Time::getMillisecondCounter() / 500) % 2 == 0) ? juce::Colour (0xffe5484d) : juce::Colour (0x44e5484d);
+
+        g.setColour (c);
+        g.fillEllipse (x, cy - 4.0f, 8.0f, 8.0f);
+        x += 16.0f;
+    }
+
+    if ((fx & kFxMiniMeter) != 0)
+    {
+        drawLevelBar (g, { x, cy - 6.0f, 54.0f, 4.0f }, levelL, clipHoldL > 0, 1.0f);
+        drawLevelBar (g, { x, cy + 2.0f, 54.0f, 4.0f }, levelR, clipHoldR > 0, 1.0f);
+        x += 62.0f;
+    }
+
+    // Красная точка; при включённой пульсации размер и яркость следуют за громкостью
+    float dotSize = 10.0f, dotAlpha = 1.0f;
+
+    if ((fx & kFxPulse) != 0)
+    {
+        const float v = juce::jmin (1.0f, (levelL + levelR) * 0.5f);
+        dotSize = 8.0f + v * 6.0f;
+        dotAlpha = 0.45f + v * 0.55f;
+    }
+
+    g.setColour (juce::Colours::red.withAlpha (dotAlpha));
+    g.fillEllipse (x + 5.0f - dotSize * 0.5f, cy - dotSize * 0.5f, dotSize, dotSize);
+
+    g.setColour (juce::Colours::white);
+    g.setFont (13.0f);
+    g.drawText (juce::String::formatted ("REC %02d:%02d", secs / 60, secs % 60),
+                rec.withTrimmedLeft ((int) (x - (float) rec.getX()) + 16), juce::Justification::centredLeft, false);
+}
+
+//==============================================================================
 void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
 {
     const int W = getWidth();
@@ -901,23 +1175,19 @@ void WebcamAudioProcessorEditor::paint (juce::Graphics& g)
         }
     }
 
+    // Индикаторы звука гаснут вместе с панелью, когда курсор ушёл
+    if (haveVideo && overlayAlpha > 0.01f && audioState != AudioState::off)
+    {
+        if ((proc.indicatorFlags & kFxWave) != 0)
+            drawWave (g, overlayAlpha);
+
+        if (isMeterPillShown())
+            drawMeterPill (g, overlayAlpha);
+    }
+
     // Индикатор записи виден всегда, чтобы не забыть про идущую запись
     if (recording)
-    {
-        const auto rec = getRecBounds();
-        const auto secs = (int) ((juce::Time::getMillisecondCounter() - recordStartMs) / 1000);
-
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillRoundedRectangle (rec.toFloat(), 8.0f);
-
-        g.setColour (juce::Colours::red);
-        g.fillEllipse ((float) rec.getX() + 10.0f, (float) rec.getCentreY() - 5.0f, 10.0f, 10.0f);
-
-        g.setColour (juce::Colours::white);
-        g.setFont (13.0f);
-        g.drawText (juce::String::formatted ("REC %02d:%02d", secs / 60, secs % 60),
-                    rec.withTrimmedLeft (26), juce::Justification::centredLeft, false);
-    }
+        drawRecPill (g);
 }
 
 void WebcamAudioProcessorEditor::resized()
@@ -954,6 +1224,7 @@ void WebcamAudioProcessorEditor::resized()
 
     items.push_back ({ &syncButton,   160,         false });
     items.push_back ({ &projectEdit,  flexibleMin, true  });
+    items.push_back ({ &indicatorsButton, 110,     false });
     items.push_back ({ &langButton,   130,         false });
 
     const int numItems = (int) items.size();

@@ -5,6 +5,8 @@
 #include "Strings.h"
 #include <juce_video/juce_video.h>
 
+#include <array>
+
 class WebcamAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    private juce::CameraDevice::Listener,
                                    private juce::Timer
@@ -53,6 +55,13 @@ private:
     void stopRecordingInternal();
     void refreshDisplay();
     void pollTransport();
+    void updateLevels();
+    void showIndicatorsMenu();
+    bool isMeterPillShown() const;
+    juce::Rectangle<int> getMeterPillBounds() const;
+    void drawMeterPill (juce::Graphics&, float alpha) const;
+    void drawWave (juce::Graphics&, float alpha) const;
+    void drawRecPill (juce::Graphics&) const;
     AudioSettings makeAudioSettings() const;
     juce::String resolveProjectName() const;
     juce::String makeUniqueBaseName (const juce::File& folder) const;
@@ -82,7 +91,7 @@ private:
     OverlayPanel topBar;
     juce::ComboBox cameraBox, lensBox, audioBox, micBox, modeBox;
     juce::ToggleButton mirrorButton, syncButton;
-    juce::TextButton recordButton, folderButton, langButton;
+    juce::TextButton recordButton, folderButton, langButton, indicatorsButton;
     juce::Label offsetLabel;
     juce::Slider offsetSlider;
     juce::TextEditor projectEdit;
@@ -107,6 +116,17 @@ private:
     bool recordedByTransport = false;
     bool prevHostPlaying = false;
     bool hostWarned = false;
+
+    // Индикаторы звука
+    enum class AudioState { off, idle, ok, noSignal };
+    AudioState audioState = AudioState::off;
+    float levelL = 0.0f, levelR = 0.0f;   // 0..1 по шкале дБ, с плавным спадом
+    int clipHoldL = 0, clipHoldR = 0;     // сколько кадров ещё показывать красный пик
+    std::array<float, 200> waveHistory {};
+    int waveHead = 0;
+    int64_t lastHostBlocks = 0;
+    juce::uint32 lastHostBlockMs = 0;
+    bool indicatorsMenuOpen = false;
     RecordKind recordKind = RecordKind::none;
     juce::uint32 recordStartMs = 0;
     juce::String recordingInfo;

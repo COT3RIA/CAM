@@ -165,11 +165,24 @@ void MicCapture::audioDeviceIOCallbackWithContext (const float* const* inputChan
         return count > 0 ? sum / (float) count : 0.0f;
     };
 
+    float blockPeak = 0.0f;
+
     for (int i = 0; i < size1; ++i)
-        buffer[(size_t) (start1 + i)] = mixToMono (i);
+    {
+        const float v = mixToMono (i);
+        buffer[(size_t) (start1 + i)] = v;
+        blockPeak = juce::jmax (blockPeak, std::abs (v));
+    }
 
     for (int i = 0; i < size2; ++i)
-        buffer[(size_t) (start2 + i)] = mixToMono (size1 + i);
+    {
+        const float v = mixToMono (size1 + i);
+        buffer[(size_t) (start2 + i)] = v;
+        blockPeak = juce::jmax (blockPeak, std::abs (v));
+    }
+
+    if (blockPeak > peak.load (std::memory_order_relaxed))
+        peak.store (blockPeak, std::memory_order_relaxed);
 
     fifo.finishedWrite (size1 + size2);
 }

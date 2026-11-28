@@ -21,6 +21,14 @@ namespace loc
         X (audioOff,           "Audio: off", "Звук: выкл") \
         X (audioMic,           "Audio: microphone", "Звук: микрофон") \
         X (audioHost,          "Audio: DAW master", "Звук: мастер DAW") \
+        X (indicators,         "Indicators", "Индикаторы") \
+        X (fxMeterPill,        "Meter with label (DAW / mic)", "Метр с подписью (DAW / микрофон)") \
+        X (fxMiniMeter,        "Mini meter at REC", "Мини-метр у REC") \
+        X (fxStatusDot,        "Audio status dot", "Точка состояния звука") \
+        X (fxWave,             "Waveform along the bottom", "Волна по нижнему краю") \
+        X (fxPulse,            "Pulsing REC dot", "Пульсация точки REC") \
+        X (fxAll,              "Enable all", "Включить все") \
+        X (fxNone,             "Turn all off", "Выключить все") \
         X (syncTransport,      "Sync with DAW", "С транспортом DAW") \
         X (projectHint,        "Project name (auto)", "Проект (авто)") \
         X (offsetLabel,        "Audio delay:", "Сдвиг звука:") \
